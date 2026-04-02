@@ -4,7 +4,7 @@ The first open-source memory consolidation daemon for AI agents.
 
 Agents feed it raw observations as markdown files; the daemon periodically runs a four-phase consolidation pass (orient → gather → consolidate → prune) to produce organized, durable memory. The filesystem is the interface — no SDK, no API, no MCP required. The LLM backend is pluggable (OpenAI, Amazon Bedrock, or anything with a chat API).
 
-Inspired by Claude Code's internal "Dream" system (the background memory consolidation engine revealed in the [March 2026 source leak](https://github.com/kuberwastaken/claude-code)), memconsolidate is a standalone, agent-agnostic reimplementation of that pattern — available to anyone building with OpenClaw, Strands, LangChain, or any custom agent framework.
+memconsolidate is a standalone, agent-agnostic reimplementation of that pattern — available to anyone building with OpenClaw, Strands, LangChain, or any custom agent framework.
 
 ## How it works
 
