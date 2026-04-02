@@ -6,7 +6,7 @@ import { loadConfig } from './config.js';
 import { MemconsolidateDaemon } from './daemon.js';
 import { log } from './logger.js';
 
-const VERSION = '1.0.0';
+const VERSION = '0.1.0';
 
 const HELP = `agent-memory-daemon v${VERSION}
 Open-source memory consolidation daemon for AI agents.
