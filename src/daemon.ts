@@ -40,6 +40,7 @@ export class MemconsolidateDaemon {
   private consolidating = false;
   private priorMtime = 0;
   private lastSessionScanAt = 0;
+  private lastConsolidationAt = 0;
   private static readonly SESSION_SCAN_THROTTLE_MS = 10 * 60 * 1000; // 10 min
 
   constructor(config: MemconsolidateConfig) {
@@ -146,6 +147,16 @@ export class MemconsolidateDaemon {
       );
       const lastConsolidatedAt = lockState.mtime;
 
+      // Rate limit: enforce minimum interval between consolidation passes
+      const sinceLastConsolidation = Date.now() - this.lastConsolidationAt;
+      if (this.lastConsolidationAt > 0 && sinceLastConsolidation < this.config.minConsolidationIntervalMs) {
+        log('info', 'daemon:rate-limited', {
+          sinceLastMs: sinceLastConsolidation,
+          minIntervalMs: this.config.minConsolidationIntervalMs,
+        });
+        return;
+      }
+
       // Scan throttle: if we recently scanned sessions and they didn't pass,
       // skip re-evaluation until the throttle window expires.
       const sinceScanMs = Date.now() - this.lastSessionScanAt;
@@ -195,6 +206,7 @@ export class MemconsolidateDaemon {
 
         // Success — release lock (updates mtime to now)
         await releaseLock(this.config.memoryDirectory);
+        this.lastConsolidationAt = Date.now();
 
         log('info', 'daemon:consolidation-complete', {
           filesCreated: result.filesCreated.length,

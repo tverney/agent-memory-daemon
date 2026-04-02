@@ -17,7 +17,57 @@ import type {
   ConsolidationResult,
   FileOperation,
   IndexEntry,
+  LlmResponse,
 } from '../types.js';
+
+/** Retry transient LLM failures with exponential backoff. */
+async function retryLlmCall(
+  backend: LlmBackend,
+  prompt: string,
+  maxRetries: number = 3,
+  signal?: AbortSignal,
+): Promise<LlmResponse> {
+  let lastError: Error | undefined;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (signal?.aborted) throw new Error('Aborted');
+    try {
+      return await backend.consolidate(prompt);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const status = extractHttpStatus(lastError.message);
+      // Don't retry client errors (4xx) except 429 (rate limit)
+      if (status !== null && status >= 400 && status < 500 && status !== 429) {
+        throw lastError;
+      }
+      if (attempt < maxRetries) {
+        const delayMs = Math.min(1000 * 2 ** attempt, 30_000);
+        log('warn', 'consolidation:llm-retry', {
+          attempt: attempt + 1,
+          maxRetries,
+          delayMs,
+          reason: lastError.message.slice(0, 200),
+        });
+        await sleep(delayMs, signal);
+      }
+    }
+  }
+  throw lastError!;
+}
+
+function extractHttpStatus(message: string): number | null {
+  const match = message.match(/error (\d{3})/i);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(new Error('Aborted'));
+    }, { once: true });
+  });
+}
 
 /**
  * Validate that a file operation path is safe — must be a simple filename
@@ -204,7 +254,7 @@ export async function runConsolidation(
   // --- Phase 3: Consolidate ---
   log('info', 'consolidation:phase', { phase: 'consolidate' });
 
-  const llmResponse = await backend.consolidate(prompt);
+  const llmResponse = await retryLlmCall(backend, prompt, 3, signal);
 
   if (signal.aborted) {
     log('info', 'consolidation:aborted', { phase: 'post-llm' });
