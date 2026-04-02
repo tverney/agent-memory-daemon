@@ -54,8 +54,11 @@ export class BedrockBackend implements LlmBackend {
   }
 
   async consolidate(prompt: string): Promise<LlmResponse> {
+    // Re-resolve credentials before each call to handle token expiry
+    // for temporary credentials (SSO, assumed roles, instance profiles).
+    this.credentials = await this.resolveCredentials();
     if (!this.credentials) {
-      throw new Error('Bedrock backend not initialized');
+      throw new Error('Bedrock backend: credentials expired and could not be refreshed');
     }
 
     const host = `bedrock-runtime.${this.region}.amazonaws.com`;

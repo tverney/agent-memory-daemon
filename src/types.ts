@@ -20,6 +20,7 @@ export interface MemconsolidateConfig {
   maxSessionContentChars: number;
   maxMemoryContentChars: number;
   dryRun: boolean;
+  minConsolidationIntervalMs: number;
 }
 
 // --- Trigger System ---

@@ -13,6 +13,7 @@ const DEFAULTS: Omit<MemconsolidateConfig, 'memoryDirectory' | 'sessionDirectory
   pollIntervalMs: 60_000,
   maxSessionContentChars: 2_000,
   maxMemoryContentChars: 4_000,
+  minConsolidationIntervalMs: 300_000, // 5 min minimum between consolidation passes
 };
 
 /**
@@ -59,6 +60,7 @@ const KEY_MAP: Record<string, string> = {
   max_session_content_chars: 'maxSessionContentChars',
   max_memory_content_chars: 'maxMemoryContentChars',
   dry_run: 'dryRun',
+  min_consolidation_interval_ms: 'minConsolidationIntervalMs',
 };
 
 function camelizeKeys(raw: Record<string, unknown>): Record<string, unknown> {
@@ -106,6 +108,7 @@ export function validateConfig(raw: unknown): MemconsolidateConfig {
     maxSessionContentChars: numberField(camelized, 'maxSessionContentChars', DEFAULTS.maxSessionContentChars),
     maxMemoryContentChars: numberField(camelized, 'maxMemoryContentChars', DEFAULTS.maxMemoryContentChars),
     dryRun: booleanField(camelized, 'dryRun', false),
+    minConsolidationIntervalMs: numberField(camelized, 'minConsolidationIntervalMs', DEFAULTS.minConsolidationIntervalMs),
   };
 
   // Validate constraints
@@ -117,6 +120,7 @@ export function validateConfig(raw: unknown): MemconsolidateConfig {
   if (config.pollIntervalMs < 1000) throw new Error(`pollIntervalMs must be at least 1000, got ${config.pollIntervalMs}`);
   if (config.maxSessionContentChars < 100) throw new Error(`maxSessionContentChars must be at least 100, got ${config.maxSessionContentChars}`);
   if (config.maxMemoryContentChars < 100) throw new Error(`maxMemoryContentChars must be at least 100, got ${config.maxMemoryContentChars}`);
+  if (config.minConsolidationIntervalMs < 0) throw new Error(`minConsolidationIntervalMs must be non-negative, got ${config.minConsolidationIntervalMs}`);
   if (!config.llmBackend) throw new Error('llmBackend is required');
 
   return config;
