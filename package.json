@@ -1,24 +1,58 @@
 {
-  "name": "memconsolidate",
+  "name": "agent-memory-daemon",
   "version": "1.0.0",
-  "description": "A standalone, language-agnostic memory consolidation daemon for AI coding agents.",
+  "description": "Open-source memory consolidation daemon for AI agents. Filesystem-native, LLM-pluggable, framework-agnostic. Works with OpenClaw, Strands, LangChain, or any agent that can write a file.",
   "type": "module",
   "main": "dist/index.js",
-  "scripts": {
-    "test": "vitest --run"
+  "bin": {
+    "agent-memory-daemon": "dist/index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest --run",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ai-agents",
+    "memory",
+    "llm",
+    "agent-memory",
+    "consolidation",
+    "daemon",
+    "openai",
+    "bedrock",
+    "langchain",
+    "strands",
+    "openclaw",
+    "dream",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tverney/agent-memory-daemon.git"
+  },
+  "homepage": "https://github.com/tverney/agent-memory-daemon",
+  "bugs": {
+    "url": "https://github.com/tverney/agent-memory-daemon/issues"
+  },
+  "author": "tverney",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "fast-check": "^4.6.0",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.2",
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.967.0",
-    "@aws-sdk/credential-providers": "^3.967.0",
     "smol-toml": "^1.6.1",
     "yaml": "^2.8.3"
   }

@@ -1,0 +1,7 @@
+src/
+test-*/
+.kiro/
+*.test.ts
+tsconfig.json
+memconsolidate.toml
+.gitignore
