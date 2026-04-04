@@ -44,12 +44,20 @@ Consolidation takes priority — if both triggers fire on the same tick, consoli
 
 ## Quick start
 
+### Install
+
 ```bash
-npm install
-npx tsc
+npm install agent-memory-daemon
 ```
 
-Create `memconsolidate.toml`:
+Or run directly with npx:
+
+```bash
+npx agent-memory-daemon init
+npx agent-memory-daemon start
+```
+
+### Configure
 
 ```toml
 memory_directory = "./memory"
@@ -69,10 +77,16 @@ profile = "default"
 model = "us.anthropic.claude-sonnet-4-20250514-v1:0"
 ```
 
-Run:
+### Run
 
 ```bash
-node dist/index.js memconsolidate.toml
+npx agent-memory-daemon start
+```
+
+Or if installed globally / as a project dependency:
+
+```bash
+agent-memory-daemon start
 ```
 
 The daemon polls on a configurable interval. Ctrl+C for graceful shutdown.
