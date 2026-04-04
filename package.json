@@ -53,6 +53,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.967.0",
     "smol-toml": "^1.6.1",
     "yaml": "^2.8.3"
   }
