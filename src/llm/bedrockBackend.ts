@@ -10,6 +10,7 @@ import {
   type SystemContentBlock,
   type ContentBlock,
 } from '@aws-sdk/client-bedrock-runtime';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { log } from '../logger.js';
 import type { LlmBackend } from './llmBackend.js';
 import type { LlmResponse, FileOperation } from '../types.js';
@@ -46,6 +47,12 @@ export class BedrockBackend implements LlmBackend {
     this.client = new BedrockRuntimeClient({
       region: this.region,
       ...(profile ? { profile } : {}),
+      // Large prompts (50K+ chars) can take minutes for the LLM to process.
+      // Default SDK timeout is too short for these workloads.
+      requestHandler: new NodeHttpHandler({
+        connectionTimeout: 10_000,   // 10s to establish connection
+        requestTimeout: 300_000,     // 5 min for LLM response
+      }),
     });
 
     // Verify credentials are resolvable by making a config resolution call
