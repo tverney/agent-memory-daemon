@@ -28,6 +28,10 @@ export class BedrockBackend implements LlmBackend {
   async initialize(options: Record<string, unknown>): Promise<void> {
     if (typeof options.region === 'string' && options.region.length > 0) {
       this.region = options.region;
+    } else if (process.env.AWS_REGION) {
+      this.region = process.env.AWS_REGION;
+    } else if (process.env.AWS_DEFAULT_REGION) {
+      this.region = process.env.AWS_DEFAULT_REGION;
     }
     if (typeof options.model === 'string' && options.model.length > 0) {
       this.modelId = options.model;
@@ -42,7 +46,8 @@ export class BedrockBackend implements LlmBackend {
       throw new Error(
         'Bedrock backend: unable to resolve AWS credentials. ' +
         'Set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env vars, ' +
-        'configure ~/.aws/credentials, or specify a profile.',
+        'configure ~/.aws/credentials, specify a profile, ' +
+        'or run in an environment with an IAM role (ECS, EC2, AgentCore).',
       );
     }
 
@@ -292,6 +297,75 @@ export class BedrockBackend implements LlmBackend {
       if (creds) return creds;
     } catch {
       // credentials file not found — continue
+    }
+
+    // 3. ECS / AgentCore container credentials (task role)
+    const containerRelUri = process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI;
+    const containerFullUri = process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI;
+    const containerEndpoint = containerFullUri
+      ? containerFullUri
+      : containerRelUri
+        ? `http://169.254.170.2${containerRelUri}`
+        : null;
+
+    if (containerEndpoint) {
+      try {
+        const headers: Record<string, string> = {};
+        const authToken = process.env.AWS_CONTAINER_AUTHORIZATION_TOKEN;
+        if (authToken) {
+          headers['Authorization'] = authToken;
+        }
+        const res = await fetch(containerEndpoint, { headers });
+        if (res.ok) {
+          const data = await res.json() as Record<string, string>;
+          if (data.AccessKeyId && data.SecretAccessKey) {
+            return {
+              accessKeyId: data.AccessKeyId,
+              secretAccessKey: data.SecretAccessKey,
+              sessionToken: data.Token,
+            };
+          }
+        }
+      } catch {
+        // container endpoint not available — continue
+      }
+    }
+
+    // 4. EC2 instance metadata (IMDSv2)
+    try {
+      const tokenRes = await fetch('http://169.254.169.254/latest/api/token', {
+        method: 'PUT',
+        headers: { 'X-aws-ec2-metadata-token-ttl-seconds': '21600' },
+        signal: AbortSignal.timeout(1000),
+      });
+      if (tokenRes.ok) {
+        const token = await tokenRes.text();
+        const credsRes = await fetch(
+          'http://169.254.169.254/latest/meta-data/iam/security-credentials/',
+          { headers: { 'X-aws-ec2-metadata-token': token }, signal: AbortSignal.timeout(1000) },
+        );
+        if (credsRes.ok) {
+          const roleName = (await credsRes.text()).trim().split('\n')[0];
+          if (roleName) {
+            const roleRes = await fetch(
+              `http://169.254.169.254/latest/meta-data/iam/security-credentials/${roleName}`,
+              { headers: { 'X-aws-ec2-metadata-token': token }, signal: AbortSignal.timeout(1000) },
+            );
+            if (roleRes.ok) {
+              const data = await roleRes.json() as Record<string, string>;
+              if (data.AccessKeyId && data.SecretAccessKey) {
+                return {
+                  accessKeyId: data.AccessKeyId,
+                  secretAccessKey: data.SecretAccessKey,
+                  sessionToken: data.Token,
+                };
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // IMDS not available — continue
     }
 
     return null;
