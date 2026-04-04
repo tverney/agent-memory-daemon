@@ -21,6 +21,9 @@ export interface MemconsolidateConfig {
   maxMemoryContentChars: number;
   dryRun: boolean;
   minConsolidationIntervalMs: number;
+  extractionEnabled: boolean;
+  extractionIntervalMs: number;
+  maxExtractionSessionChars: number;
 }
 
 // --- Trigger System ---
@@ -40,6 +43,23 @@ export interface LockState {
   mtime: number;
   isStale: boolean;
   holderAlive: boolean;
+}
+
+// --- Extraction Engine ---
+
+export interface ExtractionResult {
+  filesCreated: string[];
+  filesUpdated: string[];
+  durationMs: number;
+  promptLength: number;
+  operationsRequested: number;
+  operationsApplied: number;
+  operationsSkipped: number;
+}
+
+export interface ExtractionTriggerResult {
+  triggered: boolean;
+  modifiedFiles: string[];
 }
 
 // --- Consolidation Engine ---
