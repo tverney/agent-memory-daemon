@@ -14,6 +14,9 @@ const DEFAULTS: Omit<MemconsolidateConfig, 'memoryDirectory' | 'sessionDirectory
   maxSessionContentChars: 2_000,
   maxMemoryContentChars: 4_000,
   minConsolidationIntervalMs: 300_000, // 5 min minimum between consolidation passes
+  extractionEnabled: false,
+  extractionIntervalMs: 60_000,
+  maxExtractionSessionChars: 5_000,
 };
 
 /**
@@ -61,6 +64,9 @@ const KEY_MAP: Record<string, string> = {
   max_memory_content_chars: 'maxMemoryContentChars',
   dry_run: 'dryRun',
   min_consolidation_interval_ms: 'minConsolidationIntervalMs',
+  extraction_enabled: 'extractionEnabled',
+  extraction_interval_ms: 'extractionIntervalMs',
+  max_extraction_session_chars: 'maxExtractionSessionChars',
 };
 
 function camelizeKeys(raw: Record<string, unknown>): Record<string, unknown> {
@@ -109,6 +115,9 @@ export function validateConfig(raw: unknown): MemconsolidateConfig {
     maxMemoryContentChars: numberField(camelized, 'maxMemoryContentChars', DEFAULTS.maxMemoryContentChars),
     dryRun: booleanField(camelized, 'dryRun', false),
     minConsolidationIntervalMs: numberField(camelized, 'minConsolidationIntervalMs', DEFAULTS.minConsolidationIntervalMs),
+    extractionEnabled: booleanField(camelized, 'extractionEnabled', DEFAULTS.extractionEnabled),
+    extractionIntervalMs: numberField(camelized, 'extractionIntervalMs', DEFAULTS.extractionIntervalMs),
+    maxExtractionSessionChars: numberField(camelized, 'maxExtractionSessionChars', DEFAULTS.maxExtractionSessionChars),
   };
 
   // Validate constraints
@@ -121,6 +130,7 @@ export function validateConfig(raw: unknown): MemconsolidateConfig {
   if (config.maxSessionContentChars < 100) throw new Error(`maxSessionContentChars must be at least 100, got ${config.maxSessionContentChars}`);
   if (config.maxMemoryContentChars < 100) throw new Error(`maxMemoryContentChars must be at least 100, got ${config.maxMemoryContentChars}`);
   if (config.minConsolidationIntervalMs < 0) throw new Error(`minConsolidationIntervalMs must be non-negative, got ${config.minConsolidationIntervalMs}`);
+  if (config.extractionIntervalMs < 10_000) throw new Error(`extractionIntervalMs must be at least 10000, got ${config.extractionIntervalMs}`);
   if (!config.llmBackend) throw new Error('llmBackend is required');
 
   return config;

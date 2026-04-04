@@ -21,7 +21,7 @@ import type {
 } from '../types.js';
 
 /** Retry transient LLM failures with exponential backoff. */
-async function retryLlmCall(
+export async function retryLlmCall(
   backend: LlmBackend,
   prompt: string,
   maxRetries: number = 3,
@@ -74,7 +74,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
  * within the memory directory. Rejects path traversal, absolute paths,
  * and attempts to target the index file.
  */
-function validateOperationPath(opPath: string): boolean {
+export function validateOperationPath(opPath: string): boolean {
   // Must not be empty
   if (!opPath || opPath.trim().length === 0) return false;
 
@@ -101,7 +101,7 @@ function validateOperationPath(opPath: string): boolean {
  * Validate that a file operation's content has valid frontmatter.
  * Returns true if valid, false otherwise.
  */
-function validateFileContent(op: FileOperation): boolean {
+export function validateFileContent(op: FileOperation): boolean {
   if (op.op === 'delete') return true;
   if (!op.content) {
     log('warn', 'consolidation:missing-content', { path: op.path, op: op.op });
@@ -122,7 +122,7 @@ function validateFileContent(op: FileOperation): boolean {
 /**
  * Apply a single file operation to the memory directory.
  */
-async function applyOperation(
+export async function applyOperation(
   memoryDir: string,
   op: FileOperation,
 ): Promise<void> {
@@ -150,7 +150,7 @@ async function applyOperation(
  * Build an updated index from the current memory files after operations are applied.
  * Merges existing index entries with new/updated files and removes deleted entries.
  */
-async function buildUpdatedIndex(
+export async function buildUpdatedIndex(
   memoryDir: string,
   existingIndex: IndexEntry[],
   operations: FileOperation[],
