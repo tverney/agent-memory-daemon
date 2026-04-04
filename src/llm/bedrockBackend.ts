@@ -7,6 +7,11 @@ import { log } from '../logger.js';
 import type { LlmBackend } from './llmBackend.js';
 import type { LlmResponse, FileOperation } from '../types.js';
 import { createHash, createHmac } from 'node:crypto';
+import { setDefaultResultOrder } from 'node:dns';
+
+// Force IPv4-first DNS resolution to avoid connectivity issues in containers
+// (ECS, AgentCore, etc. often lack IPv6 routes to AWS endpoints).
+setDefaultResultOrder('ipv4first');
 
 const DEFAULT_REGION = 'us-east-1';
 const DEFAULT_MODEL_ID = 'us.anthropic.claude-sonnet-4-20250514-v1:0';
