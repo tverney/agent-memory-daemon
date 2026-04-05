@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import fc from 'fast-check';
 import { validateConfig, loadConfig } from './config.js';
 
 // Suppress logger output during tests
@@ -220,5 +221,84 @@ name = "openai"
     } finally {
       await rm(tmpDir2, { recursive: true, force: true });
     }
+  });
+});
+
+// Feature: batch-consolidation, Property 4: Invalid batch config rejected
+describe('Property 4: Invalid batch config rejected', () => {
+  const minimal = {
+    memoryDirectory: './mem',
+    sessionDirectory: './sess',
+    llmBackend: 'openai',
+  };
+
+  /**
+   * **Validates: Requirements 2.3**
+   * For any maxPromptChars < 10000, validateConfig should throw.
+   */
+  it('rejects any maxPromptChars below 10000', () => {
+    fc.assert(
+      fc.property(fc.integer({ max: 9999 }), (value) => {
+        expect(() => validateConfig({ ...minimal, maxPromptChars: value })).toThrow(
+          'maxPromptChars must be at least 10000',
+        );
+      }),
+      { numRuns: 100 },
+    );
+  });
+
+  /**
+   * **Validates: Requirements 2.4**
+   * For any maxFilesPerBatch < 1, validateConfig should throw.
+   */
+  it('rejects any maxFilesPerBatch below 1', () => {
+    fc.assert(
+      fc.property(fc.integer({ max: 0 }), (value) => {
+        expect(() => validateConfig({ ...minimal, maxFilesPerBatch: value })).toThrow(
+          'maxFilesPerBatch must be at least 1',
+        );
+      }),
+      { numRuns: 100 },
+    );
+  });
+});
+
+// Feature: batch-consolidation — Unit tests for config defaults and TOML key mapping
+// Validates: Requirements 2.1, 2.2, 2.5
+describe('Batch consolidation config defaults and TOML key mapping', () => {
+  const minimal = {
+    memoryDirectory: './mem',
+    sessionDirectory: './sess',
+    llmBackend: 'openai',
+  };
+
+  it('defaults maxPromptChars to 120000 when not provided', () => {
+    const cfg = validateConfig(minimal);
+    expect(cfg.maxPromptChars).toBe(120_000);
+  });
+
+  it('defaults maxFilesPerBatch to 30 when not provided', () => {
+    const cfg = validateConfig(minimal);
+    expect(cfg.maxFilesPerBatch).toBe(30);
+  });
+
+  it('maps TOML snake_case key max_prompt_chars to maxPromptChars', () => {
+    const cfg = validateConfig({
+      memory_directory: './mem',
+      session_directory: './sess',
+      llm_backend: 'openai',
+      max_prompt_chars: 80_000,
+    });
+    expect(cfg.maxPromptChars).toBe(80_000);
+  });
+
+  it('maps TOML snake_case key max_files_per_batch to maxFilesPerBatch', () => {
+    const cfg = validateConfig({
+      memory_directory: './mem',
+      session_directory: './sess',
+      llm_backend: 'openai',
+      max_files_per_batch: 50,
+    });
+    expect(cfg.maxFilesPerBatch).toBe(50);
   });
 });

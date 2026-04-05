@@ -17,6 +17,20 @@ interface MemoryFileContent {
   content: string;
 }
 
+/**
+ * Pre-computed shared context that is identical across all chunks.
+ * Built once by the engine and passed into buildChunkPrompt to avoid
+ * redundant filesystem reads and string formatting per chunk.
+ */
+export interface SharedPromptContext {
+  indexEntries: IndexEntry[];
+  sessions: SessionFile[];
+  manifest: string;
+  indexContent: string;
+  stalenessCaveats: string;
+  today: string;
+}
+
 // Default caps (used when no config is provided)
 const DEFAULT_MAX_MEMORY_CONTENT_CHARS = 4000;
 const DEFAULT_MAX_SESSION_CONTENT_CHARS = 2000;
@@ -125,6 +139,37 @@ function buildStalenessCaveats(memories: MemoryHeader[]): string {
 }
 
 /**
+ * Pre-compute the shared context that is identical across all chunks.
+ * Call once in the engine, then pass the result into each buildChunkPrompt call.
+ */
+export async function buildSharedContext(
+  memoryDir: string,
+  sessionDir: string,
+  allMemories: MemoryHeader[],
+): Promise<SharedPromptContext> {
+  const [indexEntries, sessions] = await Promise.all([
+    readIndex(memoryDir),
+    readRecentSessions(sessionDir),
+  ]);
+
+  const manifest = formatMemoryManifest(allMemories);
+  const indexContent = indexEntries.map(formatIndexEntry).join('\n');
+  const stalenessCaveats = buildStalenessCaveats(allMemories);
+  const today = new Date().toISOString().slice(0, 10);
+
+  return { indexEntries, sessions, manifest, indexContent, stalenessCaveats, today };
+}
+
+/**
+ * Build the stable system prompt (instructions + response format).
+ * This content is identical across all chunks and can be placed in a
+ * cacheable system message by LLM backends that support prompt caching.
+ */
+export function buildSystemPrompt(today: string): string {
+  return [buildPhaseInstructions(today), buildResponseFormat()].join('\n');
+}
+
+/**
  * Build a self-contained 4-phase consolidation prompt from current memory state.
  *
  * The prompt instructs the LLM to:
@@ -175,6 +220,89 @@ export async function buildConsolidationPrompt(
   const prompt = sections.filter(Boolean).join('\n');
   log('info', 'prompt:built', {
     memoryFiles: memories.length,
+    indexEntries: indexEntries.length,
+    sessions: sessions.length,
+    promptLength: prompt.length,
+  });
+
+  return prompt;
+}
+
+/**
+ * Build a prompt for a single chunk of a multi-chunk consolidation pass.
+ *
+ * Includes:
+ * - Full memory manifest (all files, not just this chunk's)
+ * - Full MEMORY.md index
+ * - Only the memory file contents assigned to this chunk
+ * - All session file contents (truncated per maxSessionContentChars)
+ * - Chunk context header: "Processing chunk X of Y. This chunk contains: [file list]"
+ *
+ * Reuses the same helper functions as buildConsolidationPrompt to keep
+ * prompt structure consistent.
+ *
+ * When `shared` is provided the function skips filesystem reads for index,
+ * sessions, manifest, and staleness — using the pre-computed values instead.
+ * This avoids redundant I/O and string formatting across chunks.
+ */
+export async function buildChunkPrompt(
+  memoryDir: string,
+  sessionDir: string,
+  chunkMemories: MemoryHeader[],
+  allMemories: MemoryHeader[],
+  chunkIndex: number,
+  chunksTotal: number,
+  config?: MemconsolidateConfig,
+  shared?: SharedPromptContext,
+): Promise<string> {
+  const maxMemoryChars = config?.maxMemoryContentChars ?? DEFAULT_MAX_MEMORY_CONTENT_CHARS;
+  const maxSessionChars = config?.maxSessionContentChars ?? DEFAULT_MAX_SESSION_CONTENT_CHARS;
+
+  // Use pre-computed shared context when available, otherwise read from disk
+  let indexEntries: IndexEntry[];
+  let sessions: SessionFile[];
+  let manifest: string;
+  let indexContent: string;
+  let stalenessCaveats: string;
+  let today: string;
+
+  if (shared) {
+    ({ indexEntries, sessions, manifest, indexContent, stalenessCaveats, today } = shared);
+  } else {
+    [indexEntries, sessions] = await Promise.all([
+      readIndex(memoryDir),
+      readRecentSessions(sessionDir),
+    ]);
+    manifest = formatMemoryManifest(allMemories);
+    indexContent = indexEntries.map(formatIndexEntry).join('\n');
+    stalenessCaveats = buildStalenessCaveats(allMemories);
+    today = new Date().toISOString().slice(0, 10);
+  }
+
+  // Read only this chunk's memory file contents (always from disk)
+  const memoryContents = await readMemoryFileContents(memoryDir, chunkMemories);
+
+  // Chunk context header (1-based display)
+  const fileList = chunkMemories.map((m) => m.path).join(', ');
+  const chunkHeader = `\n## Chunk Context\n\nProcessing chunk ${chunkIndex + 1} of ${chunksTotal}. This chunk contains: ${fileList}\n`;
+
+  const sections: string[] = [
+    buildPreamble(today, allMemories.length, indexEntries.length, sessions.length),
+    chunkHeader,
+    buildCurrentState(manifest, indexContent),
+    buildMemoryFileContents(memoryContents, maxMemoryChars),
+    stalenessCaveats,
+    buildSessionInfo(sessions, maxSessionChars),
+    buildPhaseInstructions(today),
+    buildResponseFormat(),
+  ];
+
+  const prompt = sections.filter(Boolean).join('\n');
+  log('info', 'prompt:chunk-built', {
+    chunkIndex,
+    chunksTotal,
+    chunkMemoryFiles: chunkMemories.length,
+    totalMemoryFiles: allMemories.length,
     indexEntries: indexEntries.length,
     sessions: sessions.length,
     promptLength: prompt.length,

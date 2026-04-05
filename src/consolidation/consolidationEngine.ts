@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { log } from '../logger.js';
 import { parseFrontmatter } from '../memory/frontmatter.js';
-import { scanMemoryFiles } from '../memory/memoryScanner.js';
+import { scanMemoryFiles, formatMemoryManifest } from '../memory/memoryScanner.js';
 import {
   readIndex,
   writeIndex,
@@ -10,8 +10,10 @@ import {
   formatIndexEntry,
   ENTRYPOINT_NAME,
 } from '../memory/indexManager.js';
-import { buildConsolidationPrompt } from './promptBuilder.js';
-import type { LlmBackend } from '../llm/llmBackend.js';
+import { buildConsolidationPrompt, buildChunkPrompt, buildSharedContext, buildSystemPrompt } from './promptBuilder.js';
+import { planChunks, type MemoryFileWithSize } from './chunkPlanner.js';
+import { mergeChunkResults, type ChunkResult } from './chunkMerger.js';
+import type { LlmBackend, ConsolidateOptions } from '../llm/llmBackend.js';
 import type {
   MemconsolidateConfig,
   ConsolidationResult,
@@ -26,12 +28,13 @@ export async function retryLlmCall(
   prompt: string,
   maxRetries: number = 3,
   signal?: AbortSignal,
+  options?: ConsolidateOptions,
 ): Promise<LlmResponse> {
   let lastError: Error | undefined;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (signal?.aborted) throw new Error('Aborted');
     try {
-      return await backend.consolidate(prompt);
+      return await backend.consolidate(prompt, options);
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       const status = extractHttpStatus(lastError.message);
@@ -198,12 +201,61 @@ export async function buildUpdatedIndex(
 }
 
 /**
+ * Compute total session content size by reading all session files.
+ */
+async function computeSessionContentSize(sessionDir: string): Promise<number> {
+  try {
+    const entries = await fs.readdir(sessionDir);
+    let totalSize = 0;
+    for (const name of entries) {
+      try {
+        const filePath = path.join(sessionDir, name);
+        const stat = await fs.stat(filePath);
+        if (stat.isDirectory()) continue;
+        const content = await fs.readFile(filePath, 'utf-8');
+        totalSize += content.length;
+      } catch {
+        // Skip unreadable files
+      }
+    }
+    return totalSize;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Scan memory files and compute their content sizes for chunk planning.
+ */
+async function computeMemoryFileSizes(
+  memoryDir: string,
+  memories: import('../types.js').MemoryHeader[],
+): Promise<MemoryFileWithSize[]> {
+  const results: MemoryFileWithSize[] = [];
+  for (const header of memories) {
+    try {
+      const filePath = path.join(memoryDir, header.path);
+      const content = await fs.readFile(filePath, 'utf-8');
+      results.push({ header, contentSize: content.length });
+    } catch {
+      // If we can't read the file, include it with size 0
+      results.push({ header, contentSize: 0 });
+    }
+  }
+  return results;
+}
+
+/**
  * Run a full four-phase consolidation pass.
  *
  * 1. Orient: scan memory dir, read index, read memory files
  * 2. Gather: identify new info from recent files and sessions
  * 3. Consolidate: send prompt to LLM backend, apply returned file operations
  * 4. Prune: update MEMORY.md index, enforce size budget, remove stale entries
+ *
+ * Supports chunk-based processing: when the memory set is large, it splits
+ * into multiple LLM calls and merges results. When content fits in one chunk,
+ * it uses the existing single-pass behavior.
  *
  * @param config - Daemon configuration
  * @param backend - Initialized LLM backend
@@ -226,6 +278,8 @@ export async function runConsolidation(
     operationsRequested: 0,
     operationsApplied: 0,
     operationsSkipped: 0,
+    chunksTotal: 1,
+    chunksCompleted: 0,
   };
 
   // --- Phase 1 & 2: Orient + Gather (handled by prompt builder) ---
@@ -238,39 +292,144 @@ export async function runConsolidation(
 
   const existingIndex = await readIndex(config.memoryDirectory);
 
-  const prompt = await buildConsolidationPrompt(
+  // Scan memory files and compute content sizes for chunk planning
+  const memories = await scanMemoryFiles(config.memoryDirectory);
+  const memoriesWithSizes = await computeMemoryFileSizes(config.memoryDirectory, memories);
+  const sessionContentSize = await computeSessionContentSize(config.sessionDirectory);
+  const manifest = formatMemoryManifest(memories);
+  const manifestSize = manifest.length;
+
+  // Plan chunks
+  const chunkPlan = planChunks(
+    memoriesWithSizes,
+    sessionContentSize,
+    manifestSize,
+    config.maxPromptChars,
+    config.maxFilesPerBatch,
+  );
+  result.chunksTotal = chunkPlan.chunks.length;
+
+  // Pre-compute shared context once (index, sessions, manifest, staleness).
+  // Reused across all chunks to avoid redundant filesystem reads.
+  const shared = await buildSharedContext(
     config.memoryDirectory,
     config.sessionDirectory,
-    undefined,
-    config,
+    memories,
   );
-  result.promptLength = prompt.length;
 
-  if (signal.aborted) {
-    log('info', 'consolidation:aborted', { phase: 'pre-llm' });
-    return result;
+  // Build the stable system prompt (instructions + response format).
+  // Backends that support prompt caching place this in a cacheable position
+  // so chunks 2+ get a cache hit on the instruction prefix.
+  const systemPrompt = buildSystemPrompt(shared.today);
+  const llmOptions: ConsolidateOptions = { systemPrompt };
+
+  let operations: FileOperation[];
+
+  if (chunkPlan.chunks.length <= 1) {
+    // --- Single chunk: use existing single-pass behavior ---
+    const prompt = await buildConsolidationPrompt(
+      config.memoryDirectory,
+      config.sessionDirectory,
+      undefined,
+      config,
+    );
+    result.promptLength = prompt.length;
+
+    if (signal.aborted) {
+      log('info', 'consolidation:aborted', { phase: 'pre-llm' });
+      return result;
+    }
+
+    // --- Phase 3: Consolidate ---
+    log('info', 'consolidation:phase', { phase: 'consolidate' });
+    log('info', 'consolidation:chunk-llm-call', {
+      chunkIndex: 0,
+      chunksTotal: 1,
+      promptSize: prompt.length,
+    });
+
+    const llmResponse = await retryLlmCall(backend, prompt, 3, signal, llmOptions);
+    result.chunksCompleted = 1;
+
+    if (signal.aborted) {
+      log('info', 'consolidation:aborted', { phase: 'post-llm' });
+      return result;
+    }
+
+    log('info', 'consolidation:llm-response', {
+      operationCount: llmResponse.operations.length,
+      reasoning: llmResponse.reasoning,
+    });
+
+    // Filter out operations targeting the index file
+    operations = llmResponse.operations.filter(
+      (op) => op.path !== ENTRYPOINT_NAME,
+    );
+    result.operationsRequested = llmResponse.operations.length;
+  } else {
+    // --- Multiple chunks: sequential loop ---
+    log('info', 'consolidation:phase', { phase: 'consolidate' });
+
+    const chunkResults: ChunkResult[] = [];
+    let totalPromptLength = 0;
+    let totalOperationsRequested = 0;
+
+    for (const chunk of chunkPlan.chunks) {
+      // Check abort signal before each chunk
+      if (signal.aborted) {
+        log('info', 'consolidation:aborted', { phase: 'chunk-loop', chunkIndex: chunk.index });
+        break;
+      }
+
+      const chunkPrompt = await buildChunkPrompt(
+        config.memoryDirectory,
+        config.sessionDirectory,
+        chunk.memoryFiles,
+        memories,
+        chunk.index,
+        chunkPlan.chunks.length,
+        config,
+        shared,
+      );
+
+      totalPromptLength += chunkPrompt.length;
+
+      log('info', 'consolidation:chunk-llm-call', {
+        chunkIndex: chunk.index,
+        chunksTotal: chunkPlan.chunks.length,
+        promptSize: chunkPrompt.length,
+      });
+
+      const llmResponse = await retryLlmCall(backend, chunkPrompt, 3, signal, llmOptions);
+      result.chunksCompleted++;
+
+      log('info', 'consolidation:llm-response', {
+        chunkIndex: chunk.index,
+        operationCount: llmResponse.operations.length,
+        reasoning: llmResponse.reasoning,
+      });
+
+      totalOperationsRequested += llmResponse.operations.length;
+
+      chunkResults.push({
+        chunkIndex: chunk.index,
+        operations: llmResponse.operations,
+      });
+    }
+
+    result.promptLength = totalPromptLength;
+    result.operationsRequested = totalOperationsRequested;
+
+    if (signal.aborted) {
+      log('info', 'consolidation:aborted', { phase: 'post-chunks' });
+      result.durationMs = Date.now() - startTime;
+      return result;
+    }
+
+    // Merge chunk results and filter out index operations
+    const mergedOps = mergeChunkResults(chunkResults);
+    operations = mergedOps.filter((op) => op.path !== ENTRYPOINT_NAME);
   }
-
-  // --- Phase 3: Consolidate ---
-  log('info', 'consolidation:phase', { phase: 'consolidate' });
-
-  const llmResponse = await retryLlmCall(backend, prompt, 3, signal);
-
-  if (signal.aborted) {
-    log('info', 'consolidation:aborted', { phase: 'post-llm' });
-    return result;
-  }
-
-  log('info', 'consolidation:llm-response', {
-    operationCount: llmResponse.operations.length,
-    reasoning: llmResponse.reasoning,
-  });
-
-  // Filter out operations targeting the index file — we manage that ourselves
-  const operations = llmResponse.operations.filter(
-    (op) => op.path !== ENTRYPOINT_NAME,
-  );
-  result.operationsRequested = llmResponse.operations.length;
 
   // Validate and apply file operations
   for (const op of operations) {
@@ -363,6 +522,8 @@ export async function runConsolidation(
     operationsApplied: result.operationsApplied,
     operationsSkipped: result.operationsSkipped,
     dryRun: config.dryRun,
+    chunksTotal: result.chunksTotal,
+    chunksCompleted: result.chunksCompleted,
   });
 
   result.durationMs = Date.now() - startTime;

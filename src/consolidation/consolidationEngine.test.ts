@@ -12,10 +12,21 @@ vi.mock('../logger.js', () => ({ log: vi.fn() }));
 // Mock modules that do filesystem reads we don't want in unit tests
 vi.mock('../memory/memoryScanner.js', () => ({
   scanMemoryFiles: vi.fn().mockResolvedValue([]),
+  formatMemoryManifest: vi.fn().mockReturnValue(''),
 }));
 
 vi.mock('./promptBuilder.js', () => ({
   buildConsolidationPrompt: vi.fn().mockResolvedValue('mock prompt'),
+  buildChunkPrompt: vi.fn().mockResolvedValue('mock chunk prompt'),
+  buildSharedContext: vi.fn().mockResolvedValue({
+    indexEntries: [],
+    sessions: [],
+    manifest: '',
+    indexContent: '',
+    stalenessCaveats: '',
+    today: '2025-01-01',
+  }),
+  buildSystemPrompt: vi.fn().mockReturnValue('mock system prompt'),
 }));
 
 // --- helpers ---
@@ -35,6 +46,15 @@ function makeConfig(overrides: Partial<MemconsolidateConfig> = {}): Memconsolida
     llmBackend: 'mock',
     llmBackendOptions: {},
     pollIntervalMs: 60_000,
+    maxSessionContentChars: 2_000,
+    maxMemoryContentChars: 4_000,
+    dryRun: false,
+    minConsolidationIntervalMs: 300_000,
+    extractionEnabled: false,
+    extractionIntervalMs: 60_000,
+    maxExtractionSessionChars: 5_000,
+    maxPromptChars: 60_000,
+    maxFilesPerBatch: 30,
     ...overrides,
   };
 }
@@ -346,5 +366,213 @@ describe('MEMORY.md operations filtered out', () => {
     const result = await runConsolidation(makeConfig(), backend, new AbortController().signal);
 
     expect(result.filesDeleted).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Requirement 6.1, 6.2, 6.3: Single-chunk backward compatibility
+// ---------------------------------------------------------------------------
+describe('single-chunk backward compatibility', () => {
+  it('makes exactly one LLM call and reports chunksTotal: 1, chunksCompleted: 1', async () => {
+    const content = validContent('Solo', 'Solo desc', 'Body');
+    const backend = makeBackend({
+      operations: [{ op: 'create', path: 'solo.md', content }],
+      reasoning: 'single chunk',
+    });
+
+    const result = await runConsolidation(makeConfig(), backend, new AbortController().signal);
+
+    expect(backend.consolidate).toHaveBeenCalledTimes(1);
+    expect(result.chunksTotal).toBe(1);
+    expect(result.chunksCompleted).toBe(1);
+    expect(result.filesCreated).toEqual(['solo.md']);
+    expect(result.indexUpdated).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Requirement 3.2: Abort between chunks
+// ---------------------------------------------------------------------------
+describe('abort between chunks (multi-chunk)', () => {
+  it('stops processing after first chunk when aborted and returns partial results', async () => {
+    const { scanMemoryFiles } = await import('../memory/memoryScanner.js');
+    const scanMock = scanMemoryFiles as ReturnType<typeof vi.fn>;
+
+    // Create 2 memory files on disk so computeMemoryFileSizes can read them
+    const file1Content = validContent('Mem1', 'desc1', 'body1');
+    const file2Content = validContent('Mem2', 'desc2', 'body2');
+    await fs.writeFile(path.join(tmpDir, 'mem1.md'), file1Content, 'utf-8');
+    await fs.writeFile(path.join(tmpDir, 'mem2.md'), file2Content, 'utf-8');
+
+    const headers = [
+      { path: 'mem1.md', name: 'Mem1', description: 'desc1', type: 'project' as const, mtimeMs: Date.now() },
+      { path: 'mem2.md', name: 'Mem2', description: 'desc2', type: 'project' as const, mtimeMs: Date.now() },
+    ];
+    scanMock.mockResolvedValueOnce(headers).mockResolvedValueOnce(headers);
+
+    const controller = new AbortController();
+    let callCount = 0;
+    const backend: LlmBackend = {
+      name: 'mock',
+      initialize: vi.fn().mockResolvedValue(undefined),
+      consolidate: vi.fn().mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          // Abort after first chunk completes
+          controller.abort();
+        }
+        return { operations: [], reasoning: 'chunk' };
+      }),
+    };
+
+    // maxFilesPerBatch: 1 forces 2 chunks (one file per chunk)
+    const config = makeConfig({ maxFilesPerBatch: 1 });
+    const result = await runConsolidation(config, backend, controller.signal);
+
+    // Only 1 LLM call should have been made (aborted before chunk 2)
+    expect(backend.consolidate).toHaveBeenCalledTimes(1);
+    expect(result.chunksTotal).toBe(2);
+    expect(result.chunksCompleted).toBe(1);
+    // No operations applied, no index update (aborted)
+    expect(result.indexUpdated).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Requirement 3.4, 3.5: LLM failure stops processing
+// ---------------------------------------------------------------------------
+describe('LLM failure stops processing (multi-chunk)', () => {
+  it('propagates error when LLM fails on chunk 2 and reports chunksCompleted: 1', async () => {
+    const { scanMemoryFiles } = await import('../memory/memoryScanner.js');
+    const scanMock = scanMemoryFiles as ReturnType<typeof vi.fn>;
+
+    // Create 2 memory files on disk
+    const file1Content = validContent('Mem1', 'desc1', 'body1');
+    const file2Content = validContent('Mem2', 'desc2', 'body2');
+    await fs.writeFile(path.join(tmpDir, 'mem1.md'), file1Content, 'utf-8');
+    await fs.writeFile(path.join(tmpDir, 'mem2.md'), file2Content, 'utf-8');
+
+    const headers = [
+      { path: 'mem1.md', name: 'Mem1', description: 'desc1', type: 'project' as const, mtimeMs: Date.now() },
+      { path: 'mem2.md', name: 'Mem2', description: 'desc2', type: 'project' as const, mtimeMs: Date.now() },
+    ];
+    scanMock.mockResolvedValueOnce(headers).mockResolvedValueOnce(headers);
+
+    let callCount = 0;
+    const backend: LlmBackend = {
+      name: 'mock',
+      initialize: vi.fn().mockResolvedValue(undefined),
+      consolidate: vi.fn().mockImplementation(async () => {
+        callCount++;
+        if (callCount >= 2) {
+          // Fail on chunk 2 with a 4xx client error so retryLlmCall doesn't retry
+          throw new Error('error 400: bad request');
+        }
+        return { operations: [], reasoning: 'chunk 1 ok' };
+      }),
+    };
+
+    const config = makeConfig({ maxFilesPerBatch: 1 });
+
+    await expect(
+      runConsolidation(config, backend, new AbortController().signal),
+    ).rejects.toThrow('error 400');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Requirement 3.5, 7.5: Chunk logging
+// ---------------------------------------------------------------------------
+describe('chunk logging', () => {
+  it('logs chunk-llm-call with chunkIndex, chunksTotal, and promptSize', async () => {
+    const { log: logMock } = await import('../logger.js');
+    const logFn = logMock as ReturnType<typeof vi.fn>;
+    logFn.mockClear();
+
+    const backend = makeBackend({ operations: [], reasoning: 'no-op' });
+    const result = await runConsolidation(makeConfig(), backend, new AbortController().signal);
+
+    // Single-chunk pass should log one chunk-llm-call event
+    const chunkLlmCalls = logFn.mock.calls.filter(
+      (call: unknown[]) => call[1] === 'consolidation:chunk-llm-call',
+    );
+    expect(chunkLlmCalls.length).toBe(1);
+    expect(chunkLlmCalls[0][2]).toEqual(
+      expect.objectContaining({
+        chunkIndex: 0,
+        chunksTotal: 1,
+        promptSize: expect.any(Number),
+      }),
+    );
+
+    // Consolidation-complete should log chunksTotal and chunksCompleted
+    const completeCalls = logFn.mock.calls.filter(
+      (call: unknown[]) => call[1] === 'consolidation:complete',
+    );
+    expect(completeCalls.length).toBe(1);
+    expect(completeCalls[0][2]).toEqual(
+      expect.objectContaining({
+        chunksTotal: 1,
+        chunksCompleted: 1,
+      }),
+    );
+  });
+
+  it('logs chunk-llm-call for each chunk in multi-chunk pass', async () => {
+    const { log: logMock } = await import('../logger.js');
+    const logFn = logMock as ReturnType<typeof vi.fn>;
+    logFn.mockClear();
+
+    const { scanMemoryFiles } = await import('../memory/memoryScanner.js');
+    const scanMock = scanMemoryFiles as ReturnType<typeof vi.fn>;
+
+    // Create 2 memory files on disk
+    const file1Content = validContent('Mem1', 'desc1', 'body1');
+    const file2Content = validContent('Mem2', 'desc2', 'body2');
+    await fs.writeFile(path.join(tmpDir, 'mem1.md'), file1Content, 'utf-8');
+    await fs.writeFile(path.join(tmpDir, 'mem2.md'), file2Content, 'utf-8');
+
+    const headers = [
+      { path: 'mem1.md', name: 'Mem1', description: 'desc1', type: 'project' as const, mtimeMs: Date.now() },
+      { path: 'mem2.md', name: 'Mem2', description: 'desc2', type: 'project' as const, mtimeMs: Date.now() },
+    ];
+    scanMock.mockResolvedValueOnce(headers).mockResolvedValueOnce(headers);
+
+    const backend = makeBackend({ operations: [], reasoning: 'no-op' });
+    const config = makeConfig({ maxFilesPerBatch: 1 });
+    const result = await runConsolidation(config, backend, new AbortController().signal);
+
+    // Multi-chunk pass should log chunk-llm-call for each chunk
+    const chunkLlmCalls = logFn.mock.calls.filter(
+      (call: unknown[]) => call[1] === 'consolidation:chunk-llm-call',
+    );
+    expect(chunkLlmCalls.length).toBe(2);
+
+    expect(chunkLlmCalls[0][2]).toEqual(
+      expect.objectContaining({
+        chunkIndex: 0,
+        chunksTotal: 2,
+        promptSize: expect.any(Number),
+      }),
+    );
+    expect(chunkLlmCalls[1][2]).toEqual(
+      expect.objectContaining({
+        chunkIndex: 1,
+        chunksTotal: 2,
+        promptSize: expect.any(Number),
+      }),
+    );
+
+    // Consolidation-complete should log chunksTotal and chunksCompleted
+    const completeCalls = logFn.mock.calls.filter(
+      (call: unknown[]) => call[1] === 'consolidation:complete',
+    );
+    expect(completeCalls.length).toBe(1);
+    expect(completeCalls[0][2]).toEqual(
+      expect.objectContaining({
+        chunksTotal: 2,
+        chunksCompleted: 2,
+      }),
+    );
   });
 });
