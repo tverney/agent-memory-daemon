@@ -355,6 +355,8 @@ describe('Property 11: Dry run produces no file writes', () => {
           extractionEnabled: true,
           extractionIntervalMs: 60_000,
           maxExtractionSessionChars: 5_000,
+          maxPromptChars: 60_000,
+          maxFilesPerBatch: 30,
         };
 
         const result = await runExtraction(
@@ -407,6 +409,8 @@ describe('Property 12: Index updated if and only if operations were applied', ()
     extractionEnabled: true,
     extractionIntervalMs: 60_000,
     maxExtractionSessionChars: 5_000,
+    maxPromptChars: 60_000,
+    maxFilesPerBatch: 30,
     ...overrides,
   });
 
@@ -579,6 +583,8 @@ describe('Property 17: ExtractionResult contains all required fields', () => {
     extractionEnabled: true,
     extractionIntervalMs: 60_000,
     maxExtractionSessionChars: 5_000,
+    maxPromptChars: 60_000,
+    maxFilesPerBatch: 30,
     ...overrides,
   });
 

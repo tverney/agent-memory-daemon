@@ -24,6 +24,8 @@ export interface MemconsolidateConfig {
   extractionEnabled: boolean;
   extractionIntervalMs: number;
   maxExtractionSessionChars: number;
+  maxPromptChars: number;
+  maxFilesPerBatch: number;
 }
 
 // --- Trigger System ---
@@ -75,6 +77,8 @@ export interface ConsolidationResult {
   operationsRequested: number;
   operationsApplied: number;
   operationsSkipped: number;
+  chunksTotal: number;
+  chunksCompleted: number;
 }
 
 // --- LLM Backend ---
