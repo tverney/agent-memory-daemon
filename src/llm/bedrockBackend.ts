@@ -12,7 +12,7 @@ import {
 } from '@aws-sdk/client-bedrock-runtime';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { log } from '../logger.js';
-import type { LlmBackend } from './llmBackend.js';
+import type { LlmBackend, ConsolidateOptions } from './llmBackend.js';
 import type { LlmResponse, FileOperation } from '../types.js';
 
 const DEFAULT_REGION = 'us-east-1';
@@ -78,7 +78,7 @@ export class BedrockBackend implements LlmBackend {
     });
   }
 
-  async consolidate(prompt: string): Promise<LlmResponse> {
+  async consolidate(prompt: string, options?: ConsolidateOptions): Promise<LlmResponse> {
     const messages: Message[] = [
       {
         role: 'user',
@@ -86,16 +86,27 @@ export class BedrockBackend implements LlmBackend {
       },
     ];
 
-    const system: SystemContentBlock[] = [
-      {
-        text: 'You are a memory consolidation assistant. Always respond with valid JSON containing an "operations" array. Each operation has "op" (create/update/delete), "path" (filename), and "content" (for create/update). Optionally include a "reasoning" string.',
-      },
-    ];
+    // Build system blocks. When a separate systemPrompt is provided we
+    // place it first with a cachePoint marker so Anthropic models on
+    // Bedrock can cache the stable prefix across multi-chunk passes.
+    const systemBlocks: SystemContentBlock[] = [];
+
+    if (options?.systemPrompt) {
+      systemBlocks.push({ text: options.systemPrompt } as SystemContentBlock);
+      // Anthropic prompt caching: a cachePoint block after the stable
+      // system text tells the model to cache everything up to this point.
+      // Non-Anthropic models on Bedrock silently ignore unknown block types.
+      systemBlocks.push({ cachePoint: { type: 'default' } } as unknown as SystemContentBlock);
+    }
+
+    systemBlocks.push({
+      text: 'You are a memory consolidation assistant. Always respond with valid JSON containing an "operations" array. Each operation has "op" (create/update/delete), "path" (filename), and "content" (for create/update). Optionally include a "reasoning" string.',
+    } as SystemContentBlock);
 
     const command = new ConverseCommand({
       modelId: this.modelId,
       messages,
-      system,
+      system: systemBlocks,
       inferenceConfig: {
         maxTokens: 8192,
         temperature: 0.2,

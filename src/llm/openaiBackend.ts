@@ -2,7 +2,7 @@
 // Uses raw fetch against the chat completions endpoint so we avoid
 // pulling in the full openai SDK as a runtime dependency.
 
-import type { LlmBackend } from './llmBackend.js';
+import type { LlmBackend, ConsolidateOptions } from './llmBackend.js';
 import type { LlmResponse, FileOperation } from '../types.js';
 import { log } from '../logger.js';
 
@@ -31,12 +31,23 @@ export class OpenAIBackend implements LlmBackend {
     }
   }
 
-  async consolidate(prompt: string): Promise<LlmResponse> {
+  async consolidate(prompt: string, options?: ConsolidateOptions): Promise<LlmResponse> {
     const url = `${this.baseUrl}/chat/completions`;
+
+    // When a separate systemPrompt is provided, split into system + user
+    // messages. OpenAI automatically caches matching prefixes, so keeping
+    // the stable instructions in the system message maximises cache hits
+    // across multi-chunk consolidation passes.
+    const messages = options?.systemPrompt
+      ? [
+          { role: 'system', content: options.systemPrompt },
+          { role: 'user', content: prompt },
+        ]
+      : [{ role: 'system', content: prompt }];
 
     const body = {
       model: this.model,
-      messages: [{ role: 'system', content: prompt }],
+      messages,
       response_format: { type: 'json_object' },
     };
 

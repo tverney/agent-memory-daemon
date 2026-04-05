@@ -17,6 +17,8 @@ const DEFAULTS: Omit<MemconsolidateConfig, 'memoryDirectory' | 'sessionDirectory
   extractionEnabled: false,
   extractionIntervalMs: 60_000,
   maxExtractionSessionChars: 5_000,
+  maxPromptChars: 120_000,
+  maxFilesPerBatch: 30,
 };
 
 /**
@@ -67,6 +69,8 @@ const KEY_MAP: Record<string, string> = {
   extraction_enabled: 'extractionEnabled',
   extraction_interval_ms: 'extractionIntervalMs',
   max_extraction_session_chars: 'maxExtractionSessionChars',
+  max_prompt_chars: 'maxPromptChars',
+  max_files_per_batch: 'maxFilesPerBatch',
 };
 
 function camelizeKeys(raw: Record<string, unknown>): Record<string, unknown> {
@@ -118,6 +122,8 @@ export function validateConfig(raw: unknown): MemconsolidateConfig {
     extractionEnabled: booleanField(camelized, 'extractionEnabled', DEFAULTS.extractionEnabled),
     extractionIntervalMs: numberField(camelized, 'extractionIntervalMs', DEFAULTS.extractionIntervalMs),
     maxExtractionSessionChars: numberField(camelized, 'maxExtractionSessionChars', DEFAULTS.maxExtractionSessionChars),
+    maxPromptChars: numberField(camelized, 'maxPromptChars', DEFAULTS.maxPromptChars),
+    maxFilesPerBatch: numberField(camelized, 'maxFilesPerBatch', DEFAULTS.maxFilesPerBatch),
   };
 
   // Validate constraints
@@ -131,6 +137,8 @@ export function validateConfig(raw: unknown): MemconsolidateConfig {
   if (config.maxMemoryContentChars < 100) throw new Error(`maxMemoryContentChars must be at least 100, got ${config.maxMemoryContentChars}`);
   if (config.minConsolidationIntervalMs < 0) throw new Error(`minConsolidationIntervalMs must be non-negative, got ${config.minConsolidationIntervalMs}`);
   if (config.extractionIntervalMs < 10_000) throw new Error(`extractionIntervalMs must be at least 10000, got ${config.extractionIntervalMs}`);
+  if (config.maxPromptChars < 10_000) throw new Error(`maxPromptChars must be at least 10000, got ${config.maxPromptChars}`);
+  if (config.maxFilesPerBatch < 1) throw new Error(`maxFilesPerBatch must be at least 1, got ${config.maxFilesPerBatch}`);
   if (!config.llmBackend) throw new Error('llmBackend is required');
 
   return config;
