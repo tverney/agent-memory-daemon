@@ -3,3 +3,4 @@ dist/
 test-*/
 memconsolidate.toml
 .npmrc
+.kiro/
