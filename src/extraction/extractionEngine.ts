@@ -68,6 +68,7 @@ export async function runExtraction(
     config.maxExtractionSessionChars,
     config.maxMemoryContentChars,
     config.maxPromptChars,
+    signal,
   );
   result.promptLength = prompt.length;
 

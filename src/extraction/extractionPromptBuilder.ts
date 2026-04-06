@@ -4,6 +4,21 @@ import { log } from '../logger.js';
 import { scanMemoryFiles, formatMemoryManifest } from '../memory/memoryScanner.js';
 
 /**
+ * Truncate a string to at most `maxChars`, cutting at the last newline
+ * boundary to avoid mid-line breaks. Appends a truncation marker when cut.
+ *
+ * Inspired by claude-code's `truncateEntrypointContent` which enforces
+ * both line and byte caps with newline-boundary awareness.
+ */
+export function truncateAtLineBoundary(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+
+  const cutAt = text.lastIndexOf('\n', maxChars);
+  const truncated = cutAt > 0 ? text.slice(0, cutAt) : text.slice(0, maxChars);
+  return truncated + '\n... (truncated)';
+}
+
+/**
  * Extract human-readable content from JSONL session transcripts.
  * Looks for common patterns: { role, content }, { type, text }, { message }.
  * Falls back to raw text if parsing fails.
@@ -34,9 +49,10 @@ function extractJsonlContent(raw: string): string {
 /**
  * Read a single session file, returning its content as a string.
  * Supports .md, .txt (plain text) and .jsonl (extract human-readable content).
- * Returns null if the file cannot be read.
+ * Returns null if the file cannot be read or the signal is aborted.
  */
-async function readSessionFile(filePath: string): Promise<string | null> {
+async function readSessionFile(filePath: string, signal?: AbortSignal): Promise<string | null> {
+  if (signal?.aborted) return null;
   try {
     const raw = await fs.readFile(filePath, 'utf-8');
     return filePath.endsWith('.jsonl') ? extractJsonlContent(raw) : raw;
@@ -60,6 +76,8 @@ async function readSessionFile(filePath: string): Promise<string | null> {
  * @param sessionDir - Path to the session directory
  * @param maxSessionChars - Maximum characters to include per session file
  * @param maxMemoryChars - Maximum total characters for the memory manifest section
+ * @param maxPromptChars - Maximum total prompt length; content is progressively truncated to fit
+ * @param signal - Optional AbortSignal for graceful cancellation during shutdown
  */
 export async function buildExtractionPrompt(
   memoryDir: string,
@@ -68,24 +86,27 @@ export async function buildExtractionPrompt(
   maxSessionChars: number,
   maxMemoryChars: number,
   maxPromptChars: number,
+  signal?: AbortSignal,
 ): Promise<string> {
   // Gather memory manifest
-  const memories = await scanMemoryFiles(memoryDir);
+  const memories = await scanMemoryFiles(memoryDir, signal);
   let manifest = formatMemoryManifest(memories);
   if (manifest.length > maxMemoryChars) {
-    manifest = manifest.slice(0, maxMemoryChars) + '\n... (truncated)';
+    manifest = truncateAtLineBoundary(manifest, maxMemoryChars);
   }
 
   // Read modified session files
   const sessionBlocks: string[] = [];
   for (const file of sessionFiles) {
+    if (signal?.aborted) break;
+
     const filePath = path.join(sessionDir, file);
-    const content = await readSessionFile(filePath);
+    const content = await readSessionFile(filePath, signal);
     if (content === null) continue;
 
     const trimmed =
       content.length > maxSessionChars
-        ? content.slice(0, maxSessionChars) + '\n... (truncated)'
+        ? truncateAtLineBoundary(content, maxSessionChars)
         : content;
     sessionBlocks.push(`### ${file}\n\n${trimmed}`);
   }
@@ -123,7 +144,7 @@ export async function buildExtractionPrompt(
     if (prompt.length > maxPromptChars) {
       const overBy = prompt.length - maxPromptChars;
       if (manifest.length > overBy) {
-        manifest = manifest.slice(0, manifest.length - overBy) + '\n... (truncated)';
+        manifest = truncateAtLineBoundary(manifest, manifest.length - overBy);
       } else {
         manifest = '... (truncated)';
       }
@@ -139,7 +160,7 @@ export async function buildExtractionPrompt(
 
     // Final hard truncation as safety net
     if (prompt.length > maxPromptChars) {
-      prompt = prompt.slice(0, maxPromptChars);
+      prompt = truncateAtLineBoundary(prompt, maxPromptChars);
     }
   }
 
@@ -173,7 +194,7 @@ function buildManifestSection(manifest: string): string {
   if (!manifest) {
     return '\n## Existing Memory Manifest\n\nNo existing memory files found.\n';
   }
-  return `\n## Existing Memory Manifest\n\nThese memory files already exist. Check this manifest before creating new files to avoid duplicates. If a topic overlaps with an existing file, update that file instead of creating a new one.\n\n${manifest}\n`;
+  return `\n## Existing Memory Manifest\n\nThese memory files already exist. Each entry includes its age — older memories may contain outdated information and are good candidates for updates. Check this manifest before creating new files to avoid duplicates. If a topic overlaps with an existing file, update that file instead of creating a new one.\n\n${manifest}\n`;
 }
 
 function buildSessionSection(sessionBlocks: string[]): string {

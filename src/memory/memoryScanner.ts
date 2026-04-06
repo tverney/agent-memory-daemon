@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { log } from '../logger.js';
 import { parseFrontmatter } from './frontmatter.js';
+import { memoryAge } from './memoryAge.js';
 import type { MemoryHeader } from '../types.js';
 
 const MAX_MEMORIES = 200;
@@ -58,7 +59,8 @@ export function formatMemoryManifest(memories: MemoryHeader[]): string {
   return memories
     .map((m) => {
       const typeTag = m.type ? ` [${m.type}]` : '';
-      return `${m.path}${typeTag}: ${m.name} — ${m.description}`;
+      const age = memoryAge(m.mtimeMs);
+      return `${m.path}${typeTag} (${age}): ${m.name} — ${m.description}`;
     })
     .join('\n');
 }
