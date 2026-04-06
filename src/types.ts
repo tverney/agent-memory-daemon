@@ -26,6 +26,7 @@ export interface MemconsolidateConfig {
   maxExtractionSessionChars: number;
   maxPromptChars: number;
   maxFilesPerBatch: number;
+  maxMemoryFiles: number;
 }
 
 // --- Trigger System ---
@@ -64,12 +65,15 @@ export interface ExtractionTriggerResult {
   modifiedFiles: string[];
 }
 
+export type SessionCursor = Record<string, { offset: number; mtimeMs: number }>;
+
 // --- Consolidation Engine ---
 
 export interface ConsolidationResult {
   filesCreated: string[];
   filesUpdated: string[];
   filesDeleted: string[];
+  orphansRemoved: string[];
   indexUpdated: boolean;
   truncationApplied: boolean;
   durationMs: number;

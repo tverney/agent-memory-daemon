@@ -271,6 +271,7 @@ export async function runConsolidation(
     filesCreated: [],
     filesUpdated: [],
     filesDeleted: [],
+    orphansRemoved: [],
     indexUpdated: false,
     truncationApplied: false,
     durationMs: 0,
@@ -510,10 +511,35 @@ export async function runConsolidation(
   }
   result.indexUpdated = true;
 
+  // --- Phase 5: Orphan sweep ---
+  // Remove .md files in the memory directory that are not referenced in the
+  // updated index. This prevents stale files from accumulating when the LLM
+  // merges content but forgets to emit delete operations. Pure filesystem
+  // logic — no extra LLM calls or tokens.
+  if (!config.dryRun && !signal.aborted) {
+    const indexedFiles = new Set(updatedEntries.map((e) => e.file));
+    const allFiles = await fs.readdir(config.memoryDirectory);
+    for (const file of allFiles) {
+      if (!file.endsWith('.md') || file === ENTRYPOINT_NAME) continue;
+      if (!indexedFiles.has(file)) {
+        try {
+          await fs.unlink(path.join(config.memoryDirectory, file));
+          result.orphansRemoved.push(file);
+          log('info', 'consolidation:orphan-removed', { path: file });
+        } catch (err: unknown) {
+          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+            log('warn', 'consolidation:orphan-remove-failed', { path: file, reason: (err as Error).message });
+          }
+        }
+      }
+    }
+  }
+
   log('info', 'consolidation:complete', {
     created: result.filesCreated.length,
     updated: result.filesUpdated.length,
     deleted: result.filesDeleted.length,
+    orphansRemoved: result.orphansRemoved.length,
     indexUpdated: result.indexUpdated,
     truncationApplied: result.truncationApplied,
     durationMs: Date.now() - startTime,

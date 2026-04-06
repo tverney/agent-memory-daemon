@@ -19,8 +19,8 @@ describe('validateConfig', () => {
 
   it('applies all defaults when only required fields are provided', () => {
     const cfg = validateConfig(minimal);
-    expect(cfg.minHours).toBe(24);
-    expect(cfg.minSessions).toBe(5);
+    expect(cfg.minHours).toBe(48);
+    expect(cfg.minSessions).toBe(8);
     expect(cfg.staleLockThresholdMs).toBe(3_600_000);
     expect(cfg.maxIndexLines).toBe(200);
     expect(cfg.maxIndexBytes).toBe(25_000);
@@ -272,14 +272,14 @@ describe('Batch consolidation config defaults and TOML key mapping', () => {
     llmBackend: 'openai',
   };
 
-  it('defaults maxPromptChars to 120000 when not provided', () => {
+  it('defaults maxPromptChars to 40000 when not provided', () => {
     const cfg = validateConfig(minimal);
-    expect(cfg.maxPromptChars).toBe(120_000);
+    expect(cfg.maxPromptChars).toBe(40_000);
   });
 
-  it('defaults maxFilesPerBatch to 30 when not provided', () => {
+  it('defaults maxFilesPerBatch to 10 when not provided', () => {
     const cfg = validateConfig(minimal);
-    expect(cfg.maxFilesPerBatch).toBe(30);
+    expect(cfg.maxFilesPerBatch).toBe(10);
   });
 
   it('maps TOML snake_case key max_prompt_chars to maxPromptChars', () => {

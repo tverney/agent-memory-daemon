@@ -1,3 +1,4 @@
+import { readdir } from 'node:fs/promises';
 import { log } from '../logger.js';
 import {
   readIndex,
@@ -66,6 +67,7 @@ export async function runExtraction(
     config.sessionDirectory,
     config.maxExtractionSessionChars,
     config.maxMemoryContentChars,
+    config.maxPromptChars,
   );
   result.promptLength = prompt.length;
 
@@ -96,11 +98,30 @@ export async function runExtraction(
   result.operationsRequested = llmResponse.operations.length;
 
   // --- Phase 3: Validate and apply file operations ---
+  // Count existing .md files (excluding MEMORY.md) for maxMemoryFiles cap
+  const existingFiles = await readdir(config.memoryDirectory);
+  const existingFileCount = existingFiles.filter(f => f.endsWith('.md') && f !== ENTRYPOINT_NAME).length;
+  let createdCount = 0;
+
   for (const op of operations) {
     if (signal.aborted) {
       log('info', 'extraction:aborted', { phase: 'apply-ops' });
       result.durationMs = Date.now() - startTime;
       return result;
+    }
+
+    // Enforce creation caps (maxMemoryFiles and maxFilesPerBatch) — only for create ops
+    if (op.op === 'create') {
+      if (existingFileCount + createdCount >= config.maxMemoryFiles) {
+        log('warn', 'extraction:max-memory-files-reached', { path: op.path, existingFileCount, maxMemoryFiles: config.maxMemoryFiles });
+        result.operationsSkipped++;
+        continue;
+      }
+      if (createdCount >= config.maxFilesPerBatch) {
+        log('warn', 'extraction:max-files-per-batch-reached', { path: op.path, createdCount, maxFilesPerBatch: config.maxFilesPerBatch });
+        result.operationsSkipped++;
+        continue;
+      }
     }
 
     if (!validateOperationPath(op.path)) {
@@ -128,6 +149,7 @@ export async function runExtraction(
     switch (op.op) {
       case 'create':
         result.filesCreated.push(op.path);
+        createdCount++;
         break;
       case 'update':
         result.filesUpdated.push(op.path);
