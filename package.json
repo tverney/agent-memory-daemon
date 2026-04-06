@@ -1,6 +1,6 @@
 {
   "name": "agent-memory-daemon",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "Open-source memory consolidation daemon for AI agents. Filesystem-native, LLM-pluggable, framework-agnostic. Works with OpenClaw, Strands, LangChain, or any agent that can write a file.",
   "type": "module",
   "main": "dist/index.js",
