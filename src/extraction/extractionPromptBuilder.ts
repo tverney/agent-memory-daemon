@@ -67,6 +67,7 @@ export async function buildExtractionPrompt(
   sessionDir: string,
   maxSessionChars: number,
   maxMemoryChars: number,
+  maxPromptChars: number,
 ): Promise<string> {
   // Gather memory manifest
   const memories = await scanMemoryFiles(memoryDir);
@@ -99,7 +100,48 @@ export async function buildExtractionPrompt(
     buildResponseFormat(),
   ];
 
-  const prompt = sections.filter(Boolean).join('\n');
+  let prompt = sections.filter(Boolean).join('\n');
+
+  // Enforce maxPromptChars budget
+  if (prompt.length > maxPromptChars) {
+    // Progressive truncation: first trim session blocks from the end
+    let currentSessionBlocks = [...sessionBlocks];
+
+    while (prompt.length > maxPromptChars && currentSessionBlocks.length > 0) {
+      currentSessionBlocks.pop();
+      const rebuiltSections = [
+        buildPreamble(today, memories.length, sessionFiles.length),
+        buildManifestSection(manifest),
+        buildSessionSection(currentSessionBlocks),
+        buildInstructions(today),
+        buildResponseFormat(),
+      ];
+      prompt = rebuiltSections.filter(Boolean).join('\n');
+    }
+
+    // If still over budget after removing all sessions, truncate manifest
+    if (prompt.length > maxPromptChars) {
+      const overBy = prompt.length - maxPromptChars;
+      if (manifest.length > overBy) {
+        manifest = manifest.slice(0, manifest.length - overBy) + '\n... (truncated)';
+      } else {
+        manifest = '... (truncated)';
+      }
+      const rebuiltSections = [
+        buildPreamble(today, memories.length, sessionFiles.length),
+        buildManifestSection(manifest),
+        buildSessionSection(currentSessionBlocks),
+        buildInstructions(today),
+        buildResponseFormat(),
+      ];
+      prompt = rebuiltSections.filter(Boolean).join('\n');
+    }
+
+    // Final hard truncation as safety net
+    if (prompt.length > maxPromptChars) {
+      prompt = prompt.slice(0, maxPromptChars);
+    }
+  }
 
   log('info', 'extraction-prompt:built', {
     memoryFiles: memories.length,

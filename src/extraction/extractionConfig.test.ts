@@ -23,7 +23,7 @@ describe('Extraction config property tests', () => {
         const cfg = validateConfig(raw);
         expect(cfg.extractionEnabled).toBe(false);
         expect(cfg.extractionIntervalMs).toBe(60_000);
-        expect(cfg.maxExtractionSessionChars).toBe(5_000);
+        expect(cfg.maxExtractionSessionChars).toBe(2_000);
       }),
       { numRuns: 100 },
     );

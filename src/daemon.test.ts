@@ -49,6 +49,7 @@ const mockRunConsolidation = vi.fn().mockResolvedValue({
   filesCreated: [],
   filesUpdated: [],
   filesDeleted: [],
+  orphansRemoved: [],
   indexUpdated: false,
   truncationApplied: false,
 });
@@ -67,9 +68,15 @@ vi.mock('./extraction/extractionTrigger.js', () => ({
 
 const mockReadExtractionCursor = vi.fn().mockResolvedValue(0);
 const mockWriteExtractionCursor = vi.fn().mockResolvedValue(undefined);
+const mockReadSessionCursor = vi.fn().mockResolvedValue({});
+const mockWriteSessionCursor = vi.fn().mockResolvedValue(undefined);
+const mockGetUnprocessedSessions = vi.fn().mockResolvedValue([]);
 vi.mock('./extraction/cursorManager.js', () => ({
   readExtractionCursor: (...args: unknown[]) => mockReadExtractionCursor(...args),
   writeExtractionCursor: (...args: unknown[]) => mockWriteExtractionCursor(...args),
+  readSessionCursor: (...args: unknown[]) => mockReadSessionCursor(...args),
+  writeSessionCursor: (...args: unknown[]) => mockWriteSessionCursor(...args),
+  getUnprocessedSessions: (...args: unknown[]) => mockGetUnprocessedSessions(...args),
 }));
 
 const mockRunExtraction = vi.fn().mockResolvedValue({
@@ -109,6 +116,9 @@ function makeConfig(overrides: Partial<MemconsolidateConfig> = {}): Memconsolida
     extractionEnabled: false,
     extractionIntervalMs: 60_000,
     maxExtractionSessionChars: 5_000,
+    maxPromptChars: 120_000,
+    maxFilesPerBatch: 30,
+    maxMemoryFiles: 100,
     ...overrides,
   };
 }
@@ -122,6 +132,9 @@ beforeEach(async () => {
   // Reset extraction mocks to defaults
   mockEvaluateExtractionTrigger.mockResolvedValue({ triggered: false, modifiedFiles: [] });
   mockReadExtractionCursor.mockResolvedValue(0);
+  mockReadSessionCursor.mockResolvedValue({});
+  mockWriteSessionCursor.mockResolvedValue(undefined);
+  mockGetUnprocessedSessions.mockResolvedValue([]);
   mockTryAcquireLock.mockResolvedValue({ acquired: false, priorMtime: 0 });
 });
 
@@ -325,7 +338,7 @@ describe('Property 6: Mutual exclusion between extraction and consolidation', ()
             resolve();
             await new Promise<void>((r) => { resolveConsolidation = r; });
             return {
-              filesCreated: [], filesUpdated: [], filesDeleted: [],
+              filesCreated: [], filesUpdated: [], filesDeleted: [], orphansRemoved: [],
               indexUpdated: false, truncationApplied: false,
               durationMs: 10, promptLength: 100,
               operationsRequested: 0, operationsApplied: 0, operationsSkipped: 0,
@@ -391,6 +404,7 @@ describe('Property 6: Mutual exclusion between extraction and consolidation', ()
         mockEvaluateExtractionTrigger.mockResolvedValueOnce({
           triggered: true, modifiedFiles: ['session-001.md'],
         });
+        mockGetUnprocessedSessions.mockResolvedValueOnce(['session-001.md']);
         mockTryAcquireLock.mockResolvedValueOnce({ acquired: true, priorMtime: 500 });
 
         // Fire runOnce without awaiting — it will hang inside extraction
@@ -451,7 +465,7 @@ describe('Property 6: Mutual exclusion between extraction and consolidation', ()
                 await new Promise<void>((r) => { resolveOp = r; });
                 consolidationActive = false;
                 return {
-                  filesCreated: [], filesUpdated: [], filesDeleted: [],
+                  filesCreated: [], filesUpdated: [], filesDeleted: [], orphansRemoved: [],
                   indexUpdated: false, truncationApplied: false,
                   durationMs: 10, promptLength: 100,
                   operationsRequested: 0, operationsApplied: 0, operationsSkipped: 0,
@@ -481,6 +495,7 @@ describe('Property 6: Mutual exclusion between extraction and consolidation', ()
             mockEvaluateExtractionTrigger.mockResolvedValueOnce({
               triggered: true, modifiedFiles: ['session-001.md'],
             });
+            mockGetUnprocessedSessions.mockResolvedValueOnce(['session-001.md']);
             mockTryAcquireLock.mockResolvedValueOnce({ acquired: true, priorMtime: 500 });
           }
 
@@ -557,6 +572,7 @@ describe('Property 14: Extraction runs if and only if enabled', () => {
             triggered: true,
             modifiedFiles: ['session-001.md'],
           });
+          mockGetUnprocessedSessions.mockResolvedValue(['session-001.md']);
           mockTryAcquireLock.mockResolvedValue({ acquired: false, priorMtime: 0 });
 
           const config = makeConfig({
@@ -603,6 +619,7 @@ describe('Property 15: Extraction rate limit enforced', () => {
             triggered: true,
             modifiedFiles: ['session-001.md'],
           });
+          mockGetUnprocessedSessions.mockResolvedValueOnce(['session-001.md']);
           mockTryAcquireLock.mockResolvedValueOnce({ acquired: true, priorMtime: 100 });
           mockRunExtraction.mockResolvedValueOnce({
             filesCreated: [],
@@ -661,6 +678,7 @@ describe('abort signal handling during extraction (Req 5.5)', () => {
       triggered: true,
       modifiedFiles: ['session-001.md'],
     });
+    mockGetUnprocessedSessions.mockResolvedValueOnce(['session-001.md']);
     mockTryAcquireLock.mockResolvedValueOnce({ acquired: true, priorMtime: 100 });
     mockRunExtraction.mockResolvedValueOnce({
       filesCreated: [], filesUpdated: [],
@@ -702,6 +720,7 @@ describe('abort signal handling during extraction (Req 5.5)', () => {
       triggered: true,
       modifiedFiles: ['session-001.md'],
     });
+    mockGetUnprocessedSessions.mockResolvedValueOnce(['session-001.md']);
     mockTryAcquireLock.mockResolvedValueOnce({ acquired: true, priorMtime: 200 });
 
     const daemon = new MemconsolidateDaemon(makeConfig({ extractionEnabled: true }));
@@ -729,6 +748,7 @@ describe('extraction log event names (Req 9.2, 9.3, 9.4)', () => {
       triggered: true,
       modifiedFiles: ['session-001.md'],
     });
+    mockGetUnprocessedSessions.mockResolvedValueOnce(['session-001.md']);
     mockTryAcquireLock.mockResolvedValueOnce({ acquired: true, priorMtime: 100 });
     mockRunExtraction.mockResolvedValueOnce({
       filesCreated: [], filesUpdated: [],
@@ -756,6 +776,7 @@ describe('extraction log event names (Req 9.2, 9.3, 9.4)', () => {
       triggered: true,
       modifiedFiles: ['session-001.md', 'session-002.md'],
     });
+    mockGetUnprocessedSessions.mockResolvedValueOnce(['session-001.md', 'session-002.md']);
     mockTryAcquireLock.mockResolvedValueOnce({ acquired: true, priorMtime: 100 });
     mockRunExtraction.mockResolvedValueOnce({
       filesCreated: ['new-memory.md'], filesUpdated: [],
@@ -781,6 +802,7 @@ describe('extraction log event names (Req 9.2, 9.3, 9.4)', () => {
       triggered: true,
       modifiedFiles: ['session-001.md'],
     });
+    mockGetUnprocessedSessions.mockResolvedValueOnce(['session-001.md']);
     mockTryAcquireLock.mockResolvedValueOnce({ acquired: true, priorMtime: 100 });
     mockRunExtraction.mockRejectedValueOnce(new Error('LLM timeout'));
 
@@ -809,6 +831,7 @@ describe('initial extraction check on startup (Req 10.4)', () => {
       triggered: true,
       modifiedFiles: ['session-001.md'],
     });
+    mockGetUnprocessedSessions.mockResolvedValueOnce(['session-001.md']);
     mockTryAcquireLock.mockResolvedValueOnce({ acquired: true, priorMtime: 50 });
     mockRunExtraction.mockResolvedValueOnce({
       filesCreated: ['extracted-memory.md'], filesUpdated: [],
@@ -855,6 +878,7 @@ describe('shutdown rollback during extraction (Req 10.5)', () => {
       triggered: true,
       modifiedFiles: ['session-001.md'],
     });
+    mockGetUnprocessedSessions.mockResolvedValueOnce(['session-001.md']);
     mockTryAcquireLock.mockResolvedValueOnce({ acquired: true, priorMtime: 7777 });
 
     const daemon = new MemconsolidateDaemon(makeConfig({ extractionEnabled: true }));
@@ -893,6 +917,7 @@ describe('Property 13: Cursor advances on success only', () => {
             triggered: true,
             modifiedFiles: [sessionFile],
           });
+          mockGetUnprocessedSessions.mockResolvedValueOnce([sessionFile]);
           mockTryAcquireLock.mockResolvedValueOnce({ acquired: true, priorMtime });
           mockRunExtraction.mockResolvedValueOnce({
             filesCreated: [],
@@ -942,6 +967,7 @@ describe('Property 13: Cursor advances on success only', () => {
             triggered: true,
             modifiedFiles: ['session-001.md'],
           });
+          mockGetUnprocessedSessions.mockResolvedValueOnce(['session-001.md']);
           mockTryAcquireLock.mockResolvedValueOnce({ acquired: true, priorMtime });
           mockRunExtraction.mockRejectedValueOnce(new Error(errorMessage));
 
@@ -985,6 +1011,7 @@ describe('Property 7: Lock lifecycle — release on success, rollback on failure
             triggered: true,
             modifiedFiles: [sessionFile],
           });
+          mockGetUnprocessedSessions.mockResolvedValueOnce([sessionFile]);
           mockTryAcquireLock.mockResolvedValueOnce({ acquired: true, priorMtime });
           mockRunExtraction.mockResolvedValueOnce({
             filesCreated: [],
@@ -1028,6 +1055,7 @@ describe('Property 7: Lock lifecycle — release on success, rollback on failure
             triggered: true,
             modifiedFiles: ['session-001.md'],
           });
+          mockGetUnprocessedSessions.mockResolvedValueOnce(['session-001.md']);
           mockTryAcquireLock.mockResolvedValueOnce({ acquired: true, priorMtime });
           mockRunExtraction.mockRejectedValueOnce(new Error(errorMessage));
 

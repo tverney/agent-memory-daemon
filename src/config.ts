@@ -5,20 +5,21 @@ import type { MemconsolidateConfig } from './types.js';
 import { log } from './logger.js';
 
 const DEFAULTS: Omit<MemconsolidateConfig, 'memoryDirectory' | 'sessionDirectory' | 'llmBackend' | 'llmBackendOptions' | 'dryRun'> = {
-  minHours: 24,
-  minSessions: 5,
+  minHours: 48,
+  minSessions: 8,
   staleLockThresholdMs: 3_600_000,
   maxIndexLines: 200,
   maxIndexBytes: 25_000,
   pollIntervalMs: 60_000,
-  maxSessionContentChars: 2_000,
-  maxMemoryContentChars: 4_000,
+  maxSessionContentChars: 1_000,
+  maxMemoryContentChars: 2_000,
   minConsolidationIntervalMs: 300_000, // 5 min minimum between consolidation passes
   extractionEnabled: false,
   extractionIntervalMs: 60_000,
-  maxExtractionSessionChars: 5_000,
-  maxPromptChars: 120_000,
-  maxFilesPerBatch: 30,
+  maxExtractionSessionChars: 2_000,
+  maxPromptChars: 40_000,
+  maxFilesPerBatch: 10,
+  maxMemoryFiles: 50,
 };
 
 /**
@@ -71,6 +72,7 @@ const KEY_MAP: Record<string, string> = {
   max_extraction_session_chars: 'maxExtractionSessionChars',
   max_prompt_chars: 'maxPromptChars',
   max_files_per_batch: 'maxFilesPerBatch',
+  max_memory_files: 'maxMemoryFiles',
 };
 
 function camelizeKeys(raw: Record<string, unknown>): Record<string, unknown> {
@@ -124,6 +126,7 @@ export function validateConfig(raw: unknown): MemconsolidateConfig {
     maxExtractionSessionChars: numberField(camelized, 'maxExtractionSessionChars', DEFAULTS.maxExtractionSessionChars),
     maxPromptChars: numberField(camelized, 'maxPromptChars', DEFAULTS.maxPromptChars),
     maxFilesPerBatch: numberField(camelized, 'maxFilesPerBatch', DEFAULTS.maxFilesPerBatch),
+    maxMemoryFiles: numberField(camelized, 'maxMemoryFiles', DEFAULTS.maxMemoryFiles),
   };
 
   // Validate constraints
@@ -139,6 +142,7 @@ export function validateConfig(raw: unknown): MemconsolidateConfig {
   if (config.extractionIntervalMs < 10_000) throw new Error(`extractionIntervalMs must be at least 10000, got ${config.extractionIntervalMs}`);
   if (config.maxPromptChars < 10_000) throw new Error(`maxPromptChars must be at least 10000, got ${config.maxPromptChars}`);
   if (config.maxFilesPerBatch < 1) throw new Error(`maxFilesPerBatch must be at least 1, got ${config.maxFilesPerBatch}`);
+  if (config.maxMemoryFiles < 1) throw new Error(`maxMemoryFiles must be at least 1, got ${config.maxMemoryFiles}`);
   if (!config.llmBackend) throw new Error('llmBackend is required');
 
   return config;

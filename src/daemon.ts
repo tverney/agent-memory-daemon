@@ -1,11 +1,12 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { log } from './logger.js';
 import { validateConfig } from './config.js';
 import { evaluateTrigger } from './trigger/triggerSystem.js';
 import { readLockState, releaseLock, rollbackLock, tryAcquireLock } from './lock/consolidationLock.js';
 import { runConsolidation } from './consolidation/consolidationEngine.js';
 import { evaluateExtractionTrigger } from './extraction/extractionTrigger.js';
-import { readExtractionCursor, writeExtractionCursor } from './extraction/cursorManager.js';
+import { readExtractionCursor, writeExtractionCursor, readSessionCursor, writeSessionCursor, getUnprocessedSessions } from './extraction/cursorManager.js';
 import { runExtraction } from './extraction/extractionEngine.js';
 import { OpenAIBackend } from './llm/openaiBackend.js';
 import { BedrockBackend } from './llm/bedrockBackend.js';
@@ -282,15 +283,29 @@ export class MemconsolidateDaemon {
           return;
         }
 
-        // Read extraction cursor
-        const cursor = await readExtractionCursor(this.config.memoryDirectory);
+        // Read timestamp cursor for trigger gating
+        const timestampCursor = await readExtractionCursor(this.config.memoryDirectory);
 
-        // Evaluate extraction trigger
+        // Evaluate extraction trigger (timestamp-based: should extraction run at all?)
         const triggerResult = await evaluateExtractionTrigger(
           this.config.sessionDirectory,
-          cursor,
+          timestampCursor,
         );
         if (!triggerResult.triggered) return;
+
+        // Read per-session cursor and filter to only genuinely unprocessed sessions
+        const sessionCursor = await readSessionCursor(this.config.memoryDirectory);
+        const unprocessedSessions = await getUnprocessedSessions(
+          this.config.sessionDirectory,
+          sessionCursor,
+        );
+
+        if (unprocessedSessions.length === 0) {
+          // Timestamp trigger fired but all sessions are already processed —
+          // advance the timestamp cursor so we don't re-evaluate next tick
+          await writeExtractionCursor(this.config.memoryDirectory, Date.now());
+          return;
+        }
 
         // Acquire lock independently (Req 3.3, 3.4)
         const lockResult = await tryAcquireLock(
@@ -307,20 +322,37 @@ export class MemconsolidateDaemon {
         this.abortController = new AbortController();
 
         log('info', 'daemon:extraction-start', {
-          sessionCount: triggerResult.modifiedFiles.length,
+          sessionCount: unprocessedSessions.length,
         });
 
         try {
           const result = await runExtraction(
             this.config,
             this.backend,
-            triggerResult.modifiedFiles,
+            unprocessedSessions,
             this.abortController.signal,
           );
 
-          // Success — release lock, advance cursor (Req 3.5, 8.1)
+          // Build updated session cursor with current mtime/size for processed sessions
+          const updatedSessionCursor = { ...sessionCursor };
+          for (const sessionFile of unprocessedSessions) {
+            try {
+              const stat = await fs.stat(
+                path.join(this.config.sessionDirectory, sessionFile),
+              );
+              updatedSessionCursor[sessionFile] = {
+                offset: stat.size,
+                mtimeMs: stat.mtimeMs,
+              };
+            } catch {
+              // File may have been deleted during extraction; skip
+            }
+          }
+
+          // Success — release lock, advance both cursors (Req 3.5, 8.1)
           await releaseLock(this.config.memoryDirectory);
           await writeExtractionCursor(this.config.memoryDirectory, Date.now());
+          await writeSessionCursor(this.config.memoryDirectory, updatedSessionCursor);
           this.lastExtractionAt = Date.now();
 
           log('info', 'daemon:extraction-complete', {
