@@ -3,7 +3,7 @@ import fc from 'fast-check';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { buildExtractionPrompt } from './extractionPromptBuilder.js';
+import { buildExtractionPrompt, buildExtractionSystemPrompt } from './extractionPromptBuilder.js';
 import type { FileOperation, LlmResponse } from '../types.js';
 
 // Suppress logger output during tests
@@ -207,44 +207,24 @@ User discussed project setup and coding preferences.`;
     }
   });
 
-  it('should contain keyword "feedback" as a memory type in the prompt', async () => {
-    await setup();
-    try {
-      const prompt = await buildExtractionPrompt(memoryDir, ['session-001.md'], sessionDir, 5_000, 10_000);
-      expect(prompt).toContain('feedback');
-    } finally {
-      await cleanup();
-    }
+  it('should contain keyword "feedback" as a memory type in the system prompt', async () => {
+    const systemPrompt = buildExtractionSystemPrompt('2026-01-01');
+    expect(systemPrompt).toContain('feedback');
   });
 
-  it('should contain keyword "project" as a memory type in the prompt', async () => {
-    await setup();
-    try {
-      const prompt = await buildExtractionPrompt(memoryDir, ['session-001.md'], sessionDir, 5_000, 10_000);
-      expect(prompt).toContain('project');
-    } finally {
-      await cleanup();
-    }
+  it('should contain keyword "project" as a memory type in the system prompt', async () => {
+    const systemPrompt = buildExtractionSystemPrompt('2026-01-01');
+    expect(systemPrompt).toContain('project');
   });
 
-  it('should contain keyword "reference" as a memory type in the prompt', async () => {
-    await setup();
-    try {
-      const prompt = await buildExtractionPrompt(memoryDir, ['session-001.md'], sessionDir, 5_000, 10_000);
-      expect(prompt).toContain('reference');
-    } finally {
-      await cleanup();
-    }
+  it('should contain keyword "reference" as a memory type in the system prompt', async () => {
+    const systemPrompt = buildExtractionSystemPrompt('2026-01-01');
+    expect(systemPrompt).toContain('reference');
   });
 
-  it('should contain keyword "JSON" for response format in the prompt', async () => {
-    await setup();
-    try {
-      const prompt = await buildExtractionPrompt(memoryDir, ['session-001.md'], sessionDir, 5_000, 10_000);
-      expect(prompt).toContain('JSON');
-    } finally {
-      await cleanup();
-    }
+  it('should contain keyword "JSON" for response format in the system prompt', async () => {
+    const systemPrompt = buildExtractionSystemPrompt('2026-01-01');
+    expect(systemPrompt).toContain('JSON');
   });
 });
 
