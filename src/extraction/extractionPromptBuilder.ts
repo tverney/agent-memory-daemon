@@ -117,8 +117,6 @@ export async function buildExtractionPrompt(
     buildPreamble(today, memories.length, sessionFiles.length),
     buildManifestSection(manifest),
     buildSessionSection(sessionBlocks),
-    buildInstructions(today),
-    buildResponseFormat(),
   ];
 
   let prompt = sections.filter(Boolean).join('\n');
@@ -134,8 +132,6 @@ export async function buildExtractionPrompt(
         buildPreamble(today, memories.length, sessionFiles.length),
         buildManifestSection(manifest),
         buildSessionSection(currentSessionBlocks),
-        buildInstructions(today),
-        buildResponseFormat(),
       ];
       prompt = rebuiltSections.filter(Boolean).join('\n');
     }
@@ -152,8 +148,6 @@ export async function buildExtractionPrompt(
         buildPreamble(today, memories.length, sessionFiles.length),
         buildManifestSection(manifest),
         buildSessionSection(currentSessionBlocks),
-        buildInstructions(today),
-        buildResponseFormat(),
       ];
       prompt = rebuiltSections.filter(Boolean).join('\n');
     }
@@ -202,6 +196,15 @@ function buildSessionSection(sessionBlocks: string[]): string {
     return '\n## Modified Session Content\n\nNo session content available.\n';
   }
   return `\n## Modified Session Content\n\nAnalyze the following session transcripts for facts, decisions, preferences, and error corrections worth remembering:\n\n${sessionBlocks.join('\n\n')}\n`;
+}
+
+/**
+ * Build the stable system prompt for extraction — instructions and response
+ * format that don't change between passes. Placed in a cacheable position
+ * by LLM backends that support prompt caching (Bedrock/Anthropic).
+ */
+export function buildExtractionSystemPrompt(today: string): string {
+  return [buildInstructions(today), buildResponseFormat()].join('\n');
 }
 
 function buildInstructions(today: string): string {

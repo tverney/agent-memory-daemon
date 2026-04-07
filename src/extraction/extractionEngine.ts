@@ -14,8 +14,9 @@ import {
   applyOperation,
   buildUpdatedIndex,
 } from '../consolidation/consolidationEngine.js';
-import { buildExtractionPrompt } from './extractionPromptBuilder.js';
+import { buildExtractionPrompt, buildExtractionSystemPrompt } from './extractionPromptBuilder.js';
 import type { LlmBackend } from '../llm/llmBackend.js';
+import type { ConsolidateOptions } from '../llm/llmBackend.js';
 import type {
   MemconsolidateConfig,
   ExtractionResult,
@@ -79,7 +80,13 @@ export async function runExtraction(
     return result;
   }
 
-  const llmResponse = await retryLlmCall(backend, prompt, 3, signal);
+  // Split stable instructions into a system prompt so Bedrock/Anthropic
+  // can cache them across extraction passes (same pattern as consolidation).
+  const today = new Date().toISOString().slice(0, 10);
+  const systemPrompt = buildExtractionSystemPrompt(today);
+  const llmOptions: ConsolidateOptions = { systemPrompt };
+
+  const llmResponse = await retryLlmCall(backend, prompt, 3, signal, llmOptions);
 
   if (signal.aborted) {
     log('info', 'extraction:aborted', { phase: 'post-llm' });
