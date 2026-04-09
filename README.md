@@ -1,4 +1,4 @@
-# Open-source memory manager daemon for AI agents
+# Memory manager daemon for AI agents
 
 Open-source memory consolidation and extraction daemon for AI agents. Filesystem-native, LLM-pluggable, framework-agnostic.
 
