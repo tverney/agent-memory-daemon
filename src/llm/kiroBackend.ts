@@ -9,6 +9,7 @@ import type { LlmResponse, FileOperation } from '../types.js';
 import { log } from '../logger.js';
 
 const DEFAULT_BINARY = 'kiro-cli';
+const DEFAULT_AGENT = 'memconsolidate';
 const DEFAULT_TIMEOUT_MS = 300_000; // 5 min
 
 // JSON-only instruction appended to every prompt so Kiro's agent emits
@@ -21,12 +22,20 @@ export class KiroBackend implements LlmBackend {
   readonly name = 'kiro';
 
   private binary = DEFAULT_BINARY;
+  private agent: string | null = DEFAULT_AGENT;
   private model: string | undefined;
   private timeoutMs = DEFAULT_TIMEOUT_MS;
 
   async initialize(options: Record<string, unknown>): Promise<void> {
     if (typeof options.binary === 'string' && options.binary.length > 0) {
       this.binary = options.binary;
+    }
+    // `agent` can be explicitly set to "" or null to disable the agent flag
+    // and fall back to Kiro's default (heavyweight) session context.
+    if (options.agent === null || options.agent === '') {
+      this.agent = null;
+    } else if (typeof options.agent === 'string') {
+      this.agent = options.agent;
     }
     if (typeof options.model === 'string' && options.model.length > 0) {
       this.model = options.model;
@@ -43,7 +52,11 @@ export class KiroBackend implements LlmBackend {
       );
     });
 
-    log('info', 'kiro:initialized', { binary: this.binary, model: this.model ?? '(default)' });
+    log('info', 'kiro:initialized', {
+      binary: this.binary,
+      agent: this.agent ?? '(default)',
+      model: this.model ?? '(default)',
+    });
   }
 
   async consolidate(prompt: string, options?: ConsolidateOptions): Promise<LlmResponse> {
@@ -53,6 +66,7 @@ export class KiroBackend implements LlmBackend {
       JSON_INSTRUCTION;
 
     const args = ['chat', '--no-interactive', '--trust-tools='];
+    if (this.agent) args.push('--agent', this.agent);
     if (this.model) args.push('--model', this.model);
     args.push(fullPrompt);
 
