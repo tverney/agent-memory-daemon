@@ -10,6 +10,7 @@ import { readExtractionCursor, writeExtractionCursor, readSessionCursor, writeSe
 import { runExtraction } from './extraction/extractionEngine.js';
 import { OpenAIBackend } from './llm/openaiBackend.js';
 import { BedrockBackend } from './llm/bedrockBackend.js';
+import { KiroBackend } from './llm/kiroBackend.js';
 import type { LlmBackend } from './llm/llmBackend.js';
 import type { MemconsolidateConfig } from './types.js';
 
@@ -22,9 +23,11 @@ function resolveBackend(name: string): LlmBackend {
       return new OpenAIBackend();
     case 'bedrock':
       return new BedrockBackend();
+    case 'kiro':
+      return new KiroBackend();
     default:
       throw new Error(
-        `Unknown LLM backend "${name}". Available backends: openai, bedrock`,
+        `Unknown LLM backend "${name}". Available backends: openai, bedrock, kiro`,
       );
   }
 }
