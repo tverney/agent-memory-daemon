@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { homedir } from 'node:os';
 import { parse as parseToml } from 'smol-toml';
 import type { MemconsolidateConfig } from './types.js';
 import { log } from './logger.js';
@@ -107,8 +108,8 @@ export function validateConfig(raw: unknown): MemconsolidateConfig {
   }
 
   const config: MemconsolidateConfig = {
-    memoryDirectory: stringField(camelized, 'memoryDirectory', './memory'),
-    sessionDirectory: stringField(camelized, 'sessionDirectory', './sessions'),
+    memoryDirectory: expandTilde(stringField(camelized, 'memoryDirectory', './memory')),
+    sessionDirectory: expandTilde(stringField(camelized, 'sessionDirectory', './sessions')),
     minHours: numberField(camelized, 'minHours', DEFAULTS.minHours),
     minSessions: numberField(camelized, 'minSessions', DEFAULTS.minSessions),
     staleLockThresholdMs: numberField(camelized, 'staleLockThresholdMs', DEFAULTS.staleLockThresholdMs),
@@ -146,6 +147,17 @@ export function validateConfig(raw: unknown): MemconsolidateConfig {
   if (!config.llmBackend) throw new Error('llmBackend is required');
 
   return config;
+}
+
+/**
+ * Expand a leading `~` or `~/` to the current user's home directory.
+ * Shells do this, but launchd/systemd and TOML parsing do not.
+ * `~user` forms are left untouched.
+ */
+export function expandTilde(p: string): string {
+  if (p === '~') return homedir();
+  if (p.startsWith('~/')) return join(homedir(), p.slice(2));
+  return p;
 }
 
 function stringField(obj: Record<string, unknown>, key: string, fallback: string): string {

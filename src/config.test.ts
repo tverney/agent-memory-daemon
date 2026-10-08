@@ -1,14 +1,34 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import fc from 'fast-check';
-import { validateConfig, loadConfig } from './config.js';
+import { validateConfig, loadConfig, expandTilde } from './config.js';
 
 // Suppress logger output during tests
 vi.mock('./logger.js', () => ({
   log: vi.fn(),
 }));
+
+describe('expandTilde', () => {
+  it('expands bare ~ and ~/ prefixes', () => {
+    expect(expandTilde('~')).toBe(homedir());
+    expect(expandTilde('~/.agent-memory/memory')).toBe(join(homedir(), '.agent-memory/memory'));
+  });
+
+  it('leaves other paths untouched', () => {
+    expect(expandTilde('/abs/path')).toBe('/abs/path');
+    expect(expandTilde('./rel')).toBe('./rel');
+    expect(expandTilde('~other/x')).toBe('~other/x');
+    expect(expandTilde('a/~/b')).toBe('a/~/b');
+  });
+
+  it('is applied to memory and session directories in validateConfig', () => {
+    const cfg = validateConfig({ memoryDirectory: '~/m', sessionDirectory: '~/s', llmBackend: 'openai' });
+    expect(cfg.memoryDirectory).toBe(join(homedir(), 'm'));
+    expect(cfg.sessionDirectory).toBe(join(homedir(), 's'));
+  });
+});
 
 describe('validateConfig', () => {
   const minimal = {
