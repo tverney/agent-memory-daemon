@@ -109,8 +109,8 @@ All keys use `snake_case` in TOML and are mapped to `camelCase` internally.
 
 | Key | Default | Description |
 |---|---|---|
-| `memory_directory` | `./memory` | Path to the memory file directory |
-| `session_directory` | `./sessions` | Path to the session file directory |
+| `memory_directory` | `./memory` | Path to the memory file directory. A leading `~/` expands to your home directory. |
+| `session_directory` | `./sessions` | Path to the session file directory. A leading `~/` expands to your home directory. |
 | `min_hours` | `24` | Minimum hours since last consolidation before triggering |
 | `min_sessions` | `5` | Minimum session files required to trigger |
 | `poll_interval_ms` | `60000` | How often the daemon checks triggers (ms) |
